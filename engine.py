@@ -49,7 +49,7 @@ def macd_hist(c):
 class BinanceData:
     def __init__(self,symbol="BTCUSDT"):
         self.symbol=symbol; self.s=requests.Session()
-        self.s.headers.update({"User-Agent":"BTC-Analyzer-V1.4/1.0"})
+        self.s.headers.update({"User-Agent":"BTC-Analyzer-V1.5/1.0"})
         self.spot_provider=None
         self.last_spot_error=None
     def get(self,url,params=None):
@@ -584,7 +584,7 @@ class ResearchTracker:
           max_price,min_price
         ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,(
-          bucket,now,"V1.4",float(price),
+          bucket,now,"V1.5",float(price),
           state.get("bias"),safe(state.get("bias_score")),
           state.get("action"),state.get("quality"),safe(state.get("quality_score")),
           state.get("setup_state"),state.get("trigger_state"),safe(state.get("trigger_score")),
@@ -732,6 +732,436 @@ class ResearchTracker:
         c.close()
         return rows
 
+
+class MultiHorizonDecision:
+    """
+    Builds three independent paper-analysis lanes:
+      SCALP    -> execution on 5m/3m/1m, permission from higher timeframes.
+      INTRADAY -> execution on 15m/30m, permission from 1H/4H/1D.
+      SWING    -> execution on 4H, permission from 1D/3D/1W.
+
+    It also exposes four parallel scalp confirmation variants for A/B testing.
+    """
+
+    @staticmethod
+    def _dir_value(a):
+        if not a:
+            return 0.0
+        struct = 1 if a.get("structure")=="BULLISH" else -1 if a.get("structure")=="BEARISH" else 0
+        wave = 1 if a.get("wave_direction")=="UP" else -1 if a.get("wave_direction")=="DOWN" else 0
+        return clamp(
+            safe(a.get("trend_score"))*.45 +
+            safe(a.get("momentum_score"))*.20 +
+            struct*.20 +
+            wave*.15
+        )
+
+    @classmethod
+    def _context(cls, tfs, weights):
+        vals=[]
+        used=[]
+        for tf,w in zip(tfs,weights):
+            a=tfs_data = cls._current_timeframes.get(tf) if hasattr(cls,"_current_timeframes") else None
+            if a:
+                vals.append(cls._dir_value(a)*w)
+                used.append(w)
+        return clamp(sum(vals)/sum(used)) if used and sum(used) else 0.0
+
+    @staticmethod
+    def _aligned(a,d,min_trend=.12, require_wave=True):
+        if not a or not d:
+            return False
+        trend_ok=safe(a.get("trend_score"))*d>=min_trend
+        if not require_wave:
+            return trend_ok
+        wave_ok=(d>0 and a.get("wave_direction")=="UP") or (d<0 and a.get("wave_direction")=="DOWN")
+        return trend_ok and wave_ok
+
+    @staticmethod
+    def _not_strongly_opposed(a,d):
+        if not a or not d:
+            return True
+        struct=a.get("structure")
+        struct_opposed=(d>0 and struct=="BEARISH") or (d<0 and struct=="BULLISH")
+        trend_opposed=safe(a.get("trend_score"))*d < -.35
+        return not (struct_opposed and trend_opposed)
+
+    @staticmethod
+    def _plan(price,a,d,lane):
+        if not price or not a or not d:
+            return {"entry":price,"sl":None,"tp1":None,"tp2":None,"risk_pct":None}
+        atr_pct=max(0.01,safe(a.get("atr_pct"),0.2))/100
+        if lane=="SCALP":
+            dist=max(price*atr_pct*1.15,price*.0015)
+            r1,r2=1.3,1.8
+        elif lane=="INTRADAY":
+            dist=max(price*atr_pct*1.25,price*.0035)
+            r1,r2=1.5,2.2
+        else:
+            dist=max(price*atr_pct*1.35,price*.008)
+            r1,r2=1.8,2.8
+        if d>0:
+            sl=price-dist; tp1=price+dist*r1; tp2=price+dist*r2
+        else:
+            sl=price+dist; tp1=price-dist*r1; tp2=price-dist*r2
+        return {"entry":price,"sl":sl,"tp1":tp1,"tp2":tp2,"risk_pct":dist/price*100}
+
+    @classmethod
+    def evaluate(cls,state):
+        T=state.get("timeframes",{})
+        cls._current_timeframes=T
+        price=state.get("price")
+
+        # Higher-timeframe directional permission.
+        scalp_ctx=cls._context(["4H","1H","30m","15m"],[.30,.30,.20,.20])
+        intraday_ctx=cls._context(["1D","4H","1H","30m"],[.25,.35,.25,.15])
+        swing_ctx=cls._context(["1W","3D","1D","4H"],[.20,.20,.35,.25])
+
+        def d_from(score,threshold=.18):
+            return 1 if score>=threshold else -1 if score<=-threshold else 0
+
+        ds=d_from(scalp_ctx,.18)
+        di=d_from(intraday_ctx,.20)
+        dw=d_from(swing_ctx,.20)
+
+        # Global bias must support scalping direction. If global bias is neutral,
+        # require an unusually strong local context instead.
+        global_d=1 if state.get("bias")=="BULLISH" else -1 if state.get("bias")=="BEARISH" else 0
+        scalp_permission=bool(ds and (
+            global_d==ds or
+            (global_d==0 and abs(scalp_ctx)>=.45)
+        ) and safe(state.get("hierarchy",{}).get("intraday"))*ds>0)
+
+        t1=T.get("1m"); t3=T.get("3m"); t5=T.get("5m"); t15=T.get("15m"); t30=T.get("30m")
+        t1h=T.get("1H"); t4h=T.get("4H"); t1d=T.get("1D")
+
+        a1=cls._aligned(t1,ds,.08) if ds else False
+        a3=cls._aligned(t3,ds,.10) if ds else False
+        a5=cls._aligned(t5,ds,.12) if ds else False
+        a15=cls._aligned(t15,ds,.10) if ds else False
+
+        common_scalp=bool(
+            scalp_permission and
+            cls._not_strongly_opposed(t15,ds) and
+            cls._not_strongly_opposed(t30,ds) and
+            abs(scalp_ctx)>=.22
+        )
+
+        # Four variants. All share identical higher-timeframe permission.
+        variants={
+          "A_BASE_5M": bool(common_scalp and a5),
+          "B_5M_3M": bool(common_scalp and a5 and a3),
+          "C_FULL_SYNC": bool(common_scalp and a5 and a3 and a1),
+          "D_5M_1M": bool(common_scalp and a5 and a1),
+        }
+
+        # Primary scalp lane uses 5m setup + 1m execution while A/B/C/D
+        # continue in shadow comparison.
+        scalp_trigger=variants["D_5M_1M"]
+        scalp_score=max(0,min(100,
+            abs(scalp_ctx)*55 +
+            (18 if a5 else 0) +
+            (12 if a1 else 0) +
+            (8 if a3 else 0) +
+            (7 if a15 else 0)
+        ))
+        scalp_q="A+" if scalp_score>=85 else "A" if scalp_score>=72 else "B" if scalp_score>=58 else "C"
+        scalp_action=("LONG" if ds>0 else "SHORT") if scalp_trigger and scalp_q in ("A","A+") else "WAIT"
+
+        # Intraday: higher context + 30m/15m execution.
+        ia15=cls._aligned(t15,di,.12) if di else False
+        ia30=cls._aligned(t30,di,.12) if di else False
+        ia1h=cls._aligned(t1h,di,.10) if di else False
+        intraday_permission=bool(di and abs(intraday_ctx)>=.25 and cls._not_strongly_opposed(t4h,di))
+        intraday_trigger=intraday_permission and ia30 and ia15
+        intraday_score=max(0,min(100,abs(intraday_ctx)*60+(15 if ia1h else 0)+(15 if ia30 else 0)+(10 if ia15 else 0)))
+        intraday_q="A+" if intraday_score>=85 else "A" if intraday_score>=72 else "B" if intraday_score>=58 else "C"
+        intraday_action=("LONG" if di>0 else "SHORT") if intraday_trigger and intraday_q in ("A","A+") else "WAIT"
+
+        # Swing: macro permission + 1D/4H execution.
+        wa1d=cls._aligned(t1d,dw,.10) if dw else False
+        wa4h=cls._aligned(t4h,dw,.12) if dw else False
+        swing_permission=bool(dw and abs(swing_ctx)>=.25)
+        swing_trigger=swing_permission and wa1d and wa4h
+        swing_score=max(0,min(100,abs(swing_ctx)*68+(17 if wa1d else 0)+(15 if wa4h else 0)))
+        swing_q="A+" if swing_score>=85 else "A" if swing_score>=72 else "B" if swing_score>=58 else "C"
+        swing_action=("LONG" if dw>0 else "SHORT") if swing_trigger and swing_q in ("A","A+") else "WAIT"
+
+        def lane(name,d,ctx,action,q,score,trigger,plan_tf,why):
+            long_perm=max(0,min(100,50+ctx*50))
+            short_perm=max(0,min(100,50-ctx*50))
+            return {
+              "lane":name,
+              "side_bias":"LONG" if d>0 else "SHORT" if d<0 else "NEUTRAL",
+              "context_score":ctx,
+              "long_permission":long_perm,
+              "short_permission":short_perm,
+              "triggered":bool(trigger),
+              "action":action,
+              "quality":q,
+              "quality_score":score,
+              "why":why,
+              "plan":cls._plan(price,T.get(plan_tf),d,name)
+            }
+
+        lanes={
+          "SCALP":lane(
+            "SCALP",ds,scalp_ctx,scalp_action,scalp_q,scalp_score,scalp_trigger,"5m",
+            {
+              "higher_tf_permission":scalp_permission,
+              "15m_support":a15,
+              "5m_setup":a5,
+              "3m_confirm":a3,
+              "1m_execution":a1
+            }
+          ),
+          "INTRADAY":lane(
+            "INTRADAY",di,intraday_ctx,intraday_action,intraday_q,intraday_score,intraday_trigger,"15m",
+            {"1h_support":ia1h,"30m_setup":ia30,"15m_trigger":ia15}
+          ),
+          "SWING":lane(
+            "SWING",dw,swing_ctx,swing_action,swing_q,swing_score,swing_trigger,"4H",
+            {"1d_support":wa1d,"4h_trigger":wa4h}
+          )
+        }
+
+        return {
+          "lanes":lanes,
+          "scalp_shadow":{
+            "common_ready":common_scalp,
+            "side":"LONG" if ds>0 else "SHORT" if ds<0 else "NEUTRAL",
+            "direction":ds,
+            "context_score":scalp_ctx,
+            "variants":variants,
+            "plan":cls._plan(price,T.get("5m"),ds,"SCALP")
+          }
+        }
+
+
+class LanePaperTracker:
+    """Tracks SCALP / INTRADAY / SWING paper trades independently."""
+    def __init__(self,path,cooldowns=None):
+        self.path=str(path)
+        self.cooldowns=cooldowns or {"SCALP":10*60,"INTRADAY":30*60,"SWING":4*60*60}
+        self._init()
+
+    def con(self):
+        c=sqlite3.connect(self.path,timeout=10); c.row_factory=sqlite3.Row; return c
+
+    def _init(self):
+        c=self.con()
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS lane_trades(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          lane TEXT, ts REAL, side TEXT, quality TEXT, quality_score REAL,
+          entry REAL, sl REAL, tp1 REAL, tp2 REAL,
+          status TEXT DEFAULT 'OPEN', exit_ts REAL, exit_price REAL,
+          result_r REAL DEFAULT 0
+        )""")
+        c.commit(); c.close()
+
+    def update(self,price):
+        if price is None:return
+        p=float(price); now=time.time()
+        c=self.con()
+        rows=c.execute("SELECT * FROM lane_trades WHERE status='OPEN'").fetchall()
+        for r in rows:
+            st=None; rr=0; ex=None
+            if r["side"]=="LONG":
+                if p<=r["sl"]:st="LOSS";rr=-1;ex=r["sl"]
+                elif p>=r["tp2"]:st="WIN_TP2";rr=2.0;ex=r["tp2"]
+                elif p>=r["tp1"]:st="WIN_TP1";rr=1.3;ex=r["tp1"]
+            else:
+                if p>=r["sl"]:st="LOSS";rr=-1;ex=r["sl"]
+                elif p<=r["tp2"]:st="WIN_TP2";rr=2.0;ex=r["tp2"]
+                elif p<=r["tp1"]:st="WIN_TP1";rr=1.3;ex=r["tp1"]
+            expiry={"SCALP":2*3600,"INTRADAY":12*3600,"SWING":72*3600}.get(r["lane"],24*3600)
+            if not st and now-r["ts"]>expiry:st="EXPIRED";rr=0;ex=p
+            if st:
+                c.execute("UPDATE lane_trades SET status=?,exit_ts=?,exit_price=?,result_r=? WHERE id=?",(st,now,ex,rr,r["id"]))
+        c.commit(); c.close()
+
+    def maybe_add(self,lanes):
+        now=time.time()
+        c=self.con()
+        for lane,s in lanes.items():
+            if s.get("action") not in ("LONG","SHORT"):
+                continue
+            p=s.get("plan",{})
+            if any(p.get(k) is None for k in ("entry","sl","tp1","tp2")):
+                continue
+            open_same=c.execute("SELECT 1 FROM lane_trades WHERE lane=? AND status='OPEN' LIMIT 1",(lane,)).fetchone()
+            if open_same:
+                continue
+            last=c.execute("SELECT ts FROM lane_trades WHERE lane=? ORDER BY id DESC LIMIT 1",(lane,)).fetchone()
+            if last and now-last["ts"]<self.cooldowns.get(lane,600):
+                continue
+            c.execute("""
+              INSERT INTO lane_trades(lane,ts,side,quality,quality_score,entry,sl,tp1,tp2)
+              VALUES(?,?,?,?,?,?,?,?,?)
+            """,(lane,now,s["action"],s["quality"],s["quality_score"],p["entry"],p["sl"],p["tp1"],p["tp2"]))
+        c.commit(); c.close()
+
+    def stats(self):
+        c=self.con()
+        out={}
+        for lane in ("SCALP","INTRADAY","SWING"):
+            rows=c.execute("SELECT * FROM lane_trades WHERE lane=? ORDER BY id DESC",(lane,)).fetchall()
+            closed=[r for r in rows if r["status"]!="OPEN"]
+            wins=[r for r in closed if str(r["status"]).startswith("WIN")]
+            losses=[r for r in closed if r["status"]=="LOSS"]
+            gross_win=sum(max(0,float(r["result_r"])) for r in closed)
+            gross_loss=abs(sum(min(0,float(r["result_r"])) for r in closed))
+            out[lane]={
+              "trades":len(rows),"open":sum(r["status"]=="OPEN" for r in rows),
+              "wins":len(wins),"losses":len(losses),
+              "win_rate":len(wins)/max(1,len(wins)+len(losses))*100,
+              "avg_r":sum(float(r["result_r"]) for r in closed)/max(1,len(closed)),
+              "profit_factor":gross_win/gross_loss if gross_loss>0 else (999 if gross_win>0 else 0),
+              "recent":[dict(r) for r in rows[:10]]
+            }
+        c.close()
+        return out
+
+
+class ShadowComparisonLab:
+    """
+    A/B/C/D scalp comparison on the same higher-timeframe setup.
+
+    A = 5m
+    B = 5m + 3m
+    C = 5m + 3m + 1m
+    D = 5m setup + 1m execution
+    """
+    STRATEGIES=("A_BASE_5M","B_5M_3M","C_FULL_SYNC","D_5M_1M")
+
+    def __init__(self,path):
+        self.path=str(path)
+        self.active=None
+        self._init()
+
+    def con(self):
+        c=sqlite3.connect(self.path,timeout=10); c.row_factory=sqlite3.Row; return c
+
+    def _init(self):
+        c=self.con()
+        c.executescript("""
+        CREATE TABLE IF NOT EXISTS shadow_trades(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          setup_id TEXT, strategy TEXT, ts REAL, side TEXT,
+          entry REAL, sl REAL, tp REAL,
+          entry_delay_sec REAL DEFAULT 0,
+          confirmation_cost_pct REAL,
+          status TEXT DEFAULT 'OPEN',
+          exit_ts REAL, exit_price REAL, result_r REAL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS shadow_misses(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          setup_id TEXT, strategy TEXT, side TEXT, ts REAL, reason TEXT
+        );
+        """)
+        c.commit(); c.close()
+
+    def _finalize_setup(self):
+        if not self.active:
+            return
+        if "A_BASE_5M" in self.active["triggered"]:
+            c=self.con()
+            for st in self.STRATEGIES:
+                if st not in self.active["triggered"]:
+                    already=c.execute("SELECT 1 FROM shadow_misses WHERE setup_id=? AND strategy=?",(self.active["id"],st)).fetchone()
+                    if not already:
+                        c.execute("INSERT INTO shadow_misses(setup_id,strategy,side,ts,reason) VALUES(?,?,?,?,?)",
+                                  (self.active["id"],st,self.active["side"],time.time(),"BASE_TRIGGERED_BUT_STRICTER_DID_NOT"))
+            c.commit(); c.close()
+        self.active=None
+
+    def update_trades(self,price):
+        if price is None:return
+        p=float(price); now=time.time()
+        c=self.con()
+        rows=c.execute("SELECT * FROM shadow_trades WHERE status='OPEN'").fetchall()
+        for r in rows:
+            st=None;rr=0;ex=None
+            if r["side"]=="LONG":
+                if p<=r["sl"]:st="LOSS";rr=-1;ex=r["sl"]
+                elif p>=r["tp"]:st="WIN";rr=1.8;ex=r["tp"]
+            else:
+                if p>=r["sl"]:st="LOSS";rr=-1;ex=r["sl"]
+                elif p<=r["tp"]:st="WIN";rr=1.8;ex=r["tp"]
+            if not st and now-r["ts"]>2*3600:st="EXPIRED";rr=0;ex=p
+            if st:c.execute("UPDATE shadow_trades SET status=?,exit_ts=?,exit_price=?,result_r=? WHERE id=?",(st,now,ex,rr,r["id"]))
+        c.commit();c.close()
+
+    def process(self,shadow,price):
+        self.update_trades(price)
+        common=bool(shadow.get("common_ready"))
+        side=shadow.get("side")
+        if not common or side not in ("LONG","SHORT"):
+            self._finalize_setup()
+            return
+
+        now=time.time()
+        if self.active is None or self.active["side"]!=side:
+            self._finalize_setup()
+            self.active={"id":f"{int(now)}-{side}","side":side,"start":now,"triggered":set(),"base_entry":None}
+
+        variants=shadow.get("variants",{})
+        plan=shadow.get("plan",{})
+        if any(plan.get(k) is None for k in ("entry","sl","tp2")):
+            return
+
+        c=self.con()
+        for st in self.STRATEGIES:
+            if not variants.get(st) or st in self.active["triggered"]:
+                continue
+            entry=float(plan["entry"]); sl=float(plan["sl"]); tp=float(plan["tp2"])
+            delay=now-self.active["start"]
+            cost=None
+            if st=="A_BASE_5M":
+                self.active["base_entry"]=entry
+                cost=0.0
+            elif self.active.get("base_entry"):
+                base=self.active["base_entry"]
+                signed=(entry/base-1)*100
+                cost=signed if side=="LONG" else -signed
+
+            c.execute("""
+              INSERT INTO shadow_trades(
+                setup_id,strategy,ts,side,entry,sl,tp,entry_delay_sec,confirmation_cost_pct
+              ) VALUES(?,?,?,?,?,?,?,?,?)
+            """,(self.active["id"],st,now,side,entry,sl,tp,delay,cost))
+            self.active["triggered"].add(st)
+        c.commit(); c.close()
+
+    def stats(self):
+        c=self.con()
+        out=[]
+        for st in self.STRATEGIES:
+            rows=c.execute("SELECT * FROM shadow_trades WHERE strategy=?",(st,)).fetchall()
+            closed=[r for r in rows if r["status"]!="OPEN"]
+            wins=[r for r in closed if r["status"]=="WIN"]
+            losses=[r for r in closed if r["status"]=="LOSS"]
+            gw=sum(max(0,float(r["result_r"])) for r in closed)
+            gl=abs(sum(min(0,float(r["result_r"])) for r in closed))
+            misses=c.execute("SELECT COUNT(*) n FROM shadow_misses WHERE strategy=?",(st,)).fetchone()["n"]
+            delays=[safe(r["entry_delay_sec"]) for r in rows]
+            costs=[safe(r["confirmation_cost_pct"],None) for r in rows if r["confirmation_cost_pct"] is not None]
+            out.append({
+              "strategy":st,
+              "trades":len(rows),
+              "wins":len(wins),"losses":len(losses),
+              "win_rate":len(wins)/max(1,len(wins)+len(losses))*100,
+              "avg_r":sum(float(r["result_r"]) for r in closed)/max(1,len(closed)),
+              "profit_factor":gw/gl if gl>0 else (999 if gw>0 else 0),
+              "avg_delay_sec":sum(delays)/max(1,len(delays)),
+              "avg_confirmation_cost_pct":sum(costs)/max(1,len(costs)) if costs else None,
+              "missed_setups":int(misses)
+            })
+        recent=[dict(r) for r in c.execute("SELECT * FROM shadow_trades ORDER BY id DESC LIMIT 20").fetchall()]
+        c.close()
+        return {"strategies":out,"recent":recent,"active_setup":self.active["id"] if self.active else None}
+
 class Engine:
     def __init__(self,root,cfg):
         self.cfg=cfg
@@ -754,6 +1184,9 @@ class Engine:
             self.data_dir/"research.db",
             cfg.get("research_snapshot_seconds",300)
         )
+        self.lane_paper=LanePaperTracker(self.data_dir/"lane_paper.db")
+        self.shadow=ShadowComparisonLab(self.data_dir/"shadow_compare.db")
+        self.multi=MultiHorizonDecision()
         self.state={"status":"STARTING"}
         self.lock=threading.RLock()
         self.stop=threading.Event()
@@ -765,10 +1198,20 @@ class Engine:
         self.paper.update(s.get("price"))
         self.paper.add(s)
 
+        mh=self.multi.evaluate(s)
+        s["lanes"]=mh["lanes"]
+
+        self.lane_paper.update(s.get("price"))
+        self.lane_paper.maybe_add(s["lanes"])
+
+        self.shadow.process(mh["scalp_shadow"],s.get("price"))
+
         self.research.update_outcomes(s.get("price"))
         self.research.maybe_snapshot(s)
 
         s["paper"]=self.paper.stats()
+        s["lane_paper"]=self.lane_paper.stats()
+        s["shadow_compare"]=self.shadow.stats()
         s["research"]=self.research.stats()
         s["storage"]={
           "data_dir":str(self.data_dir),

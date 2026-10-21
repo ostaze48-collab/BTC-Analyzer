@@ -1,30 +1,21 @@
-# BTC Analyzer V1.4 — Research & Persistence
+# BTC Analyzer V1.5
 
 ## New
-- Saves a decision snapshot every 5 minutes by default, including WAIT.
-- Stores WHY WAIT, warnings, vetoes, hierarchy, evidence families and timeframes.
-- Tracks observed price after 15m, 1h, 4h, 12h and 24h.
-- Tracks MFE and MAE for each snapshot.
-- Dashboard includes Research Memory and quality statistics.
-- CSV export at `/api/research.csv`.
-- Persistent-storage ready through environment variable `DATA_DIR`.
-
-## Render persistent storage
-The app works without a persistent disk, but local SQLite files may be lost on redeploy/restart.
-
-For durable research data:
-1. Add a Persistent Disk to the Render service.
-2. Mount it at `/var/data`.
-3. Add environment variable:
-   `DATA_DIR=/var/data`
-4. Redeploy.
-
-Then `/diag` should show:
-`"persistent_requested": true`
-
-## Databases
-- `paper.db` — actual paper LONG/SHORT signals.
-- `research.db` — all research snapshots, including WAIT decisions.
+- Three independent paper-analysis lanes:
+  - SCALP: 5m setup + 1m execution, only when higher-timeframe direction permits it.
+  - INTRADAY: 30m setup + 15m trigger with 1H/4H/1D context.
+  - SWING: 1D/4H execution with 1W/3D/1D context.
+- Direction Permission scores for LONG and SHORT.
+- Parallel scalp shadow comparison:
+  - A_BASE_5M
+  - B_5M_3M
+  - C_FULL_SYNC
+  - D_5M_1M
+- Tracks per-strategy:
+  trades, win rate, profit factor, avg R, average trigger delay,
+  confirmation cost, and missed setups.
+- Separate paper performance for SCALP / INTRADAY / SWING.
+- Persistent storage still supported with DATA_DIR=/var/data.
 
 ## Important
-Research/Paper only. No real orders are placed.
+Research / paper only. No live orders.
