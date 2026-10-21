@@ -1,156 +1,126 @@
-# BTC Analyzer V2.7 — Structure-Aware Execution & Pattern Validation
+# BTC Analyzer V2.8 — FAST SCALP + Fixed $1,000 Capital
 
-V2.7 builds on the V2.6 Price Action Engine. No new technical indicator is added.
+V2.8 adds a fourth trading lane while preserving the existing research methodology.
+No new technical indicator is added.
 
-## 1. Structure-Aware SL / TP
+## Permanent Paper Capital
 
-ATR is now a fallback, not the preferred execution geometry.
+The MAIN Paper account and all independent Lane-Lab accounts are fixed at:
 
-For each lane the decision engine first looks for trustworthy structural levels.
+`$1,000.00`
 
-Possible stop sources:
-- SUPPORT_ZONE
-- RESISTANCE_ZONE
-- UP_TRENDLINE
-- DOWN_TRENDLINE
-- SWING_SUPPORT
-- SWING_RESISTANCE
+The Dashboard no longer provides a capital-change control.
+The capital API also rejects manual changes.
 
-A structural stop is accepted only when:
-- it is on the correct side of the entry,
-- the source has sufficient quality,
-- the stop is not unrealistically tight,
-- the stop is not excessively far for that lane.
+When V2.8 starts on a persistent database whose ACTIVE experiment used another
+starting balance, that experiment is archived once and a fresh $1,000 experiment
+is created. Historical experiments are preserved.
 
-If no valid structure exists, the system automatically uses:
+If an old experiment had an open trade when the fixed-capital migration occurred,
+that trade is stored as RESET with zero P&L rather than being misclassified as a
+market win/loss.
 
-`ATR_FALLBACK`
-
-No artificial structural level is invented.
-
-## 2. Structure-aware targets
-
-Possible target sources:
-- nearby opposing S/R zone
-- opposing trendline
-- swing support/resistance
-- validated chart-pattern target
-- R-multiple fallback
-
-The Dashboard shows exactly where:
-- SL
-- TP1
-- TP2
-
-came from.
-
-## 3. Pattern Validation Lifecycle
-
-Classical pattern detection is no longer just a name.
-
-Each chart-pattern candidate now receives a lifecycle state:
-
-- CANDIDATE
-- CONFIRMED
-- RETESTED
-- FAILED
-- ACTIVE (for channel-type structures)
-
-Examples:
-
-Double Bottom:
-- geometry first -> CANDIDATE
-- close above neckline -> CONFIRMED
-- breakout + later neckline test -> RETESTED
-- break below pattern invalidation -> FAILED
-
-The same concept is applied to:
-- Double Top / Bottom
-- H&S / Inverse H&S
-- triangles
-- wedges
-- flags
-- channels
-
-## 4. Pattern targets
-
-When a pattern is CONFIRMED or RETESTED, the engine can calculate a projected
-target from its geometry.
-
-A validated target may be used as a TP candidate only when:
-- its direction matches the intended trade,
-- it is beyond the entry in the correct direction,
-- it is structurally meaningful.
-
-CANDIDATE patterns are not allowed to supply a trade target.
-
-## 5. Pattern weights are lifecycle-aware
-
-Pattern evidence is weighted approximately as:
-
-- FAILED: 0
-- CANDIDATE: small weight
-- ACTIVE: reduced weight
-- CONFIRMED: full weight
-- RETESTED: strongest validated weight
-
-A pattern still cannot create a trade by itself.
-
-## 6. Price Action veto remains conservative
-
-One candle or one chart pattern cannot hard-veto a setup.
-
-A strong PA veto still requires meaningful opposition from at least two
-independent Price Action families.
-
-## 7. Execution-plan research
-
-Every main and Lane-Lab Paper trade now stores:
-
-- plan_mode
-- stop_source
-- tp1_source
-- tp2_source
-
-The system compares actual closed-trade outcomes for:
-
-- STRUCTURE_AWARE
-- ATR_FALLBACK
-
-Metrics:
-- trades
-- W/L
-- Win Rate
-- Net P&L
-- Avg R
-- Avg MFE
-- Avg MAE
-- Capture Efficiency
-
-This allows later versions to determine from data whether structure-aware
-execution actually improves results.
-
-## 8. Existing principles retained
-
-- one MAIN paper trade globally
-- independent SCALP / INTRADAY / SWING Lane Lab
-- Opportunity IDs
-- closed-candle analysis
-- MFE / MAE
-- Experiment History
-- Equity Curve / Drawdown / Expectancy
-- Price Action is confluence, never a standalone trigger
-- Market Regime remains research-only
-
-## Persistent storage
-
-Keep:
+Keep Render persistence enabled:
 
 `DATA_DIR=/var/data`
 
-with a Render Persistent Disk mounted at `/var/data`.
+## Four Trading Lanes
 
-## Paper / Research only
+V2.8 measures:
 
-No real orders are sent. Pattern recognition and projected targets are heuristic
-technical-analysis tools, not guaranteed forecasts.
+1. FAST_SCALP
+2. SCALP
+3. INTRADAY
+4. SWING
+
+The MAIN account still allows only ONE open trade globally. If several lanes are
+actionable at once, the strongest Setup Score wins, with Available R:R as the
+tie-breaker.
+
+The Lane Comparison Lab tests all four lanes independently so the MAIN account's
+one-trade rule does not bias the comparison.
+
+## FAST SCALP
+
+FAST_SCALP is intentionally simpler and faster than normal SCALP.
+
+Primary logic:
+- 3m = micro-direction
+- 1m = execution
+- 5m = short-term countertrend guard
+- 15m = secondary countertrend guard only
+- 1m / 3m volume must not be strongly adverse
+- lightweight Price Action confluence / veto
+
+It does NOT require the full higher-timeframe synchronization demanded by normal
+SCALP. This makes it capable of generating more frequent opportunities.
+
+### FAST_SCALP risk geometry
+
+Default fallback geometry is deliberately compact:
+- shorter stop than normal SCALP
+- TP1 approximately 0.85R
+- TP2 approximately 1.25R
+- minimum Available R:R gate = 1.00R
+- expiry = 15 minutes
+
+When a trustworthy 1m structural support/resistance/trendline exists, the existing
+Structure-Aware engine may use it. Otherwise FAST_SCALP uses ATR_FALLBACK.
+
+### Consecutive opportunities
+
+A FAST_SCALP opportunity is tied to the latest CLOSED 1m candle.
+
+Example:
+- closed 1m bar 18:31 -> FAST_SCALP opportunity A
+- repeated 30-second engine cycle on the same bar -> still opportunity A
+- closed 1m bar 18:32 -> opportunity B
+
+This prevents duplicate entries within one minute while allowing a new fast setup
+on the next closed candle after the previous trade has finished.
+
+## FAST_SCALP is not assumed to be profitable
+
+It is measured independently using the same $1,000 starting capital and the same
+configured risk-per-trade percentage. The system compares it against SCALP,
+INTRADAY and SWING using:
+
+- closed trades
+- W/L and Win Rate
+- Net P&L
+- Return %
+- Expectancy R
+- Profit Factor
+- Max Drawdown
+- MFE / MAE
+- Capture Efficiency
+- Quality Score
+- Evidence / Reliability
+- performance by Market Regime
+- Price Action alignment
+- Structure-Aware vs ATR execution plan
+
+A provisional best lane still requires at least 10 closed trades. Thirty or more
+closed trades are treated as higher research evidence.
+
+## Existing V2.7 features retained
+
+- Support / Resistance Zones 2.0
+- Trendlines and Channels
+- Candlestick pattern candidates
+- classical chart-pattern candidates
+- Pattern lifecycle: CANDIDATE / CONFIRMED / RETESTED / FAILED / ACTIVE
+- Structure-Aware SL / TP with ATR fallback
+- Price Action confluence and conservative multi-family veto
+- Opportunity IDs
+- MFE / MAE and Capture Efficiency
+- Equity Curve, Drawdown and Expectancy
+- Experiment history
+- SCALP A/B/C/D shadow research
+- closed-candle analysis
+- one MAIN trade globally
+
+## Important
+
+V2.8 is Paper / Research only. It sends no real orders and no observed Paper result
+guarantees future profitability.

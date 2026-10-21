@@ -3,7 +3,7 @@ from .core import clamp, safe
 
 
 class DecisionEngine:
-    MIN_RR={"SCALP":1.20,"INTRADAY":1.40,"SWING":1.60}
+    MIN_RR={"FAST_SCALP":1.00,"SCALP":1.20,"INTRADAY":1.40,"SWING":1.60}
 
     CANDLE_NAMES={
         "DOJI","HAMMER","SHOOTING_STAR","BULLISH_ENGULFING",
@@ -67,7 +67,9 @@ class DecisionEngine:
                 "stop_source":"NONE","tp1_source":"NONE","tp2_source":"NONE"
             }
         atr_pct=max(.01,safe(a.get("atr_pct"),.2))/100
-        if lane=="SCALP":
+        if lane=="FAST_SCALP":
+            dist=max(price*atr_pct*.75,price*.0008); r1,r2=.85,1.25
+        elif lane=="SCALP":
             dist=max(price*atr_pct*1.15,price*.0015); r1,r2=1.3,1.8
         elif lane=="INTRADAY":
             dist=max(price*atr_pct*1.25,price*.0035); r1,r2=1.5,2.2
@@ -189,7 +191,11 @@ class DecisionEngine:
         atr_abs=price*max(.01,safe(a.get("atr_pct"),.2))/100
         buffer_abs=max(atr_abs*.25,price*.00035)
 
-        if lane=="SCALP":
+        if lane=="FAST_SCALP":
+            min_stop=max(price*.0006,atr_abs*.35)
+            max_stop=price*.0045
+            default_r1,default_r2=.85,1.25
+        elif lane=="SCALP":
             min_stop=max(price*.0010,atr_abs*.55)
             max_stop=price*.0080
             default_r1,default_r2=1.3,1.8
@@ -445,13 +451,14 @@ class DecisionEngine:
         PA=(analysis.get("price_action") or {}).get("timeframes",{})
         global_d=1 if analysis.get("bias")=="BULLISH" else -1 if analysis.get("bias")=="BEARISH" else 0
 
+        fast_ctx=self._context(T,["5m","3m","1m"],[.20,.50,.30])
         scalp_ctx=self._context(T,["4H","1H","30m","15m"],[.30,.30,.20,.20])
         intra_ctx=self._context(T,["1D","4H","1H","30m"],[.25,.35,.25,.15])
         swing_ctx=self._context(T,["1W","3D","1D","4H"],[.20,.20,.35,.25])
 
         def d_from(s,t=.18):
             return 1 if s>=t else -1 if s<=-t else 0
-        ds=d_from(scalp_ctx,.18); di=d_from(intra_ctx,.20); dw=d_from(swing_ctx,.20)
+        df=d_from(fast_ctx,.12); ds=d_from(scalp_ctx,.18); di=d_from(intra_ctx,.20); dw=d_from(swing_ctx,.20)
 
         context_score=safe((context or {}).get("score"),0.0)
         context_alignment=context_score*ds if ds else 0.0
@@ -461,6 +468,9 @@ class DecisionEngine:
 
         # Price Action matching. It can reinforce or veto; it never creates
         # a trigger if the original trend/structure/wave trigger is absent.
+        pa_fast=self._pa_match(
+            analysis,["5m","3m","1m"],[.15,.50,.35],df
+        )
         pa_scalp=self._pa_match(
             analysis,["15m","5m","3m","1m"],[.20,.40,.25,.15],ds
         )
@@ -470,6 +480,34 @@ class DecisionEngine:
         pa_swing=self._pa_match(
             analysis,["1D","4H"],[.45,.55],dw
         )
+
+        # FAST_SCALP: lightweight microstructure path. 3m defines micro direction,
+        # 1m executes, and 5m/15m only act as countertrend guards.
+        f1=self._aligned(t1,df,.04,require_wave=False) if df else False
+        f3=self._aligned(t3,df,.06,require_wave=False) if df else False
+        f5_guard=self._not_strongly_opposed(t5,df) if df else False
+        f15_guard=self._not_strongly_opposed(t15,df) if df else False
+        fvol=max(safe((t1 or {}).get("volume_score")),safe((t3 or {}).get("volume_score")))
+        fast_trigger=bool(
+            df and abs(fast_ctx)>=.16 and f3 and f1 and f5_guard and f15_guard and
+            fvol>-.45
+        )
+        fast_score=max(0,min(100,
+            abs(fast_ctx)*48 + (24 if f3 else 0) + (18 if f1 else 0) +
+            (6 if f5_guard else 0) + (4 if fvol>=0 else 0) + pa_fast["score"]*7
+        ))
+        fast_grade=self._grade(fast_score)
+        if pa_fast["state"]=="OPPOSED":
+            fast_grade=self._cap_grade(fast_grade,"B")
+        fast_plan=self._plan(live_price,t1,df,"FAST_SCALP",PA.get("1m"))
+        fast_diag=self._diagnostics(
+            fast_plan,t1,df,"FAST_SCALP",fast_trigger,PA.get("1m"),pa_fast
+        )
+        fast_action=("LONG" if df>0 else "SHORT") if (
+            fast_trigger and fast_score>=64 and fast_grade in ("B","A","A+") and
+            fast_diag["rr_gate_pass"] and fast_diag["chasing_risk"]!="HIGH" and
+            not pa_fast["strong_opposition"]
+        ) else "WAIT"
 
         a1=self._aligned(t1,ds,.08) if ds else False
         a3=self._aligned(t3,ds,.10) if ds else False
@@ -585,6 +623,14 @@ class DecisionEngine:
             }
 
         lanes={
+            "FAST_SCALP":lane(
+                "FAST_SCALP",df,fast_ctx,fast_action,fast_grade,fast_score,
+                fast_trigger,fast_plan,fast_diag,{
+                    "5m_guard":f5_guard,"15m_guard":f15_guard,
+                    "3m_micro_direction":f3,"1m_execution":f1,
+                    "volume_not_adverse":fvol>-.45
+                },pa_fast
+            ),
             "SCALP":lane(
                 "SCALP",ds,scalp_ctx,scalp_action,scalp_grade,scalp_score,
                 scalp_trigger,scalp_plan,scalp_diag,{

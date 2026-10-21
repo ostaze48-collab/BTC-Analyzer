@@ -6,7 +6,7 @@ class OpportunityTracker:
     Gives each evolving setup one stable ID so repeated 30-second engine
     cycles are not mistaken for independent opportunities.
     """
-    LANES=("SCALP","INTRADAY","SWING")
+    LANES=("FAST_SCALP","SCALP","INTRADAY","SWING")
 
     def __init__(self,db_path):
         self.db_path=str(db_path)
@@ -103,7 +103,7 @@ class OpportunityTracker:
         self._event(c,cur["id"],"CLOSED",cur.get("last_score"),"WAIT",reason)
         self.active.pop(lane_name,None)
 
-    def observe(self,lanes):
+    def observe(self,lanes,fast_bar_ts=None):
         """
         Hysteresis:
         - create when score >= 50 and side is directional
@@ -120,6 +120,66 @@ class OpportunityTracker:
             score=float(lane.get("setup_score") or 0)
             directional=side in ("LONG","SHORT")
             cur=self.active.get(lane_name)
+
+            # FAST_SCALP is tied to a CLOSED 1m bar. Same bar => same ID;
+            # next closed bar => fresh opportunity. This allows consecutive
+            # fast trades without duplicate entries inside the same minute.
+            if lane_name=="FAST_SCALP":
+                action=lane.get("action")
+                if action not in ("LONG","SHORT") or fast_bar_ts is None:
+                    if cur:
+                        self._close(c,lane_name,"TRIGGER_OFF")
+                    continue
+
+                bar_key=int(float(fast_bar_ts))
+                oid=f"FAST_SCALP-{bar_key}-{action}"
+                if cur and cur["id"]!=oid:
+                    self._close(c,lane_name,"NEXT_1M_BAR")
+                    cur=None
+
+                if not cur:
+                    row=c.execute(
+                        "SELECT * FROM opportunities WHERE opportunity_id=?",(oid,)
+                    ).fetchone()
+                    if row:
+                        cur={
+                            "id":row["opportunity_id"],"lane":lane_name,
+                            "side":row["side"],"start_ts":float(row["start_ts"]),
+                            "state":row["status"],
+                            "start_score":float(row["start_score"] or 0),
+                            "max_score":float(row["max_score"] or 0),
+                            "last_score":float(row["last_score"] or 0),
+                        }
+                        self.active[lane_name]=cur
+                    else:
+                        cur={
+                            "id":oid,"lane":lane_name,"side":action,
+                            "start_ts":now,"state":"TRIGGERED",
+                            "start_score":score,"max_score":score,"last_score":score
+                        }
+                        self.active[lane_name]=cur
+                        c.execute("""
+                          INSERT INTO opportunities(
+                            opportunity_id,lane,side,start_ts,last_ts,status,
+                            start_score,max_score,last_score
+                          ) VALUES(?,?,?,?,?,?,?,?,?)
+                        """,(oid,lane_name,action,now,now,"TRIGGERED",score,score,score))
+                        self._event(c,oid,"TRIGGERED",score,action,"FAST_1M_TRIGGER")
+                else:
+                    cur["max_score"]=max(cur["max_score"],score)
+                    cur["last_score"]=score
+                    c.execute("""
+                      UPDATE opportunities SET last_ts=?,max_score=?,last_score=?
+                      WHERE opportunity_id=?
+                    """,(now,cur["max_score"],score,cur["id"]))
+
+                out[lane_name]={
+                    "opportunity_id":cur["id"],"state":"TRIGGERED",
+                    "side":action,"age_sec":max(0,now-cur["start_ts"]),
+                    "start_score":cur["start_score"],
+                    "max_score":cur["max_score"],
+                }
+                continue
 
             if cur and (not directional or side!=cur["side"] or score<45):
                 self._close(c,lane_name,"SIDE_FLIP" if directional and side!=cur["side"] else "SETUP_FADED")

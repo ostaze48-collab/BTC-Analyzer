@@ -16,7 +16,7 @@ from btc_analyzer.lane_lab import LaneComparisonLab
 from btc_analyzer.price_action import PriceActionEngine
 
 class Engine:
-    VERSION="V2.7"
+    VERSION="V2.8"
 
     def __init__(self,root:Path,cfg:dict):
         self.root=root
@@ -89,7 +89,7 @@ class Engine:
 
         # Stable opportunity IDs prevent repeated engine cycles from being
         # misread as independent setups.
-        active_opportunities=self.opportunities.observe(decision["lanes"])
+        active_opportunities=self.opportunities.observe(decision["lanes"], fast_bar_ts=(closed_bar or {}).get("ts"))
         for lane_name,lane in decision["lanes"].items():
             lane["opportunity"]=active_opportunities.get(lane_name)
         actionable=[x for x in decision["lanes"].values() if x.get("action") in ("LONG","SHORT")]
@@ -160,6 +160,8 @@ class Engine:
             "price_action_standalone_trigger":False,
             "structure_aware_execution":True,
             "pattern_validation_lifecycle":True,
+            "fast_scalp_enabled":True,
+            "fixed_paper_capital":1000.0,
         }
 
         st={

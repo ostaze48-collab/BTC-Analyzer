@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>BTC Analyzer V2.7</title>
+<title>BTC Analyzer V2.8</title>
 <link rel="stylesheet" href="/static/dashboard.css">
 </head>
 <body>
 <div class="shell">
   <header class="topbar">
     <div>
-      <h1>BTC Analyzer <span>V2.7</span></h1>
-      <div class="subtitle">Quality First · Closed-Candle Analysis · Scalp / Intraday / Swing · Research & Paper P&amp;L</div>
+      <h1>BTC Analyzer <span>V2.8</span></h1>
+      <div class="subtitle">Quality First · Closed-Candle Analysis · Fast Scalp / Scalp / Intraday / Swing · Research & Paper P&amp;L</div>
     </div>
     <div class="topmeta">
       <span id="statusBadge" class="badge">STARTING</span>
@@ -65,15 +65,13 @@
       <div class="section-title">رأس المال الافتراضي</div>
       <article class="card capital-control">
         <div>
-          <div class="card-title">Simulation Capital</div>
-          <div class="minor">النظام الرئيسي يفتح صفقة واحدة فقط في أي لحظة. تغيير رأس المال يبدأ Experiment جديدًا؛ التجربة السابقة تُؤرشف وتبقى محفوظة للمقارنة.</div>
+          <div class="card-title">Simulation Capital — FIXED</div>
+          <div class="fixed-capital">$1,000.00</div>
+          <div class="minor">ثابت في V2.8 للحساب الرئيسي وجميع مختبرات المسارات حتى تكون المقارنة عادلة ولا تختلط النتائج بأحجام رأس مال مختلفة.</div>
         </div>
         <div class="capital-actions">
-          <input id="capitalInput" type="number" min="1" step="1" placeholder="100">
-          <button id="applyCapital" class="action-btn">تطبيق رأس المال وبدء تجربة جديدة</button>
           <a class="action-btn link-btn" href="/api/paper/trades.csv">تصدير صفقات التجربة CSV</a>
         </div>
-        <div id="capitalMessage" class="minor"></div>
       </article>
 
       <div class="section-title">عداد الربح والخسارة المحققة</div>
@@ -88,7 +86,7 @@
           <div id="contextBox"></div>
         </article>
         <article class="card">
-          <div class="card-title">منهجية V2.7</div>
+          <div class="card-title">منهجية V2.8</div>
           <div class="principles">
             <div>✓ التحليل الفني يستخدم الشموع المغلقة فقط.</div>
             <div>✓ السعر الحي يستخدم للتنفيذ الافتراضي فقط.</div>
@@ -96,6 +94,8 @@
             <div>✓ Setup Score ليس احتمال نجاح.</div>
             <div>✓ Price Action لا يفتح صفقة بمفرده؛ يعمل كـConfluence/Veto فقط.</div>
             <div>✓ النماذج الفنية تظهر كـCandidates هندسية وليست حقائق مؤكدة.</div>
+            <div>✓ FAST SCALP يعتمد على 3m للاتجاه المصغر و1m للتنفيذ و5m/15m كحارس فقط.</div>
+            <div>✓ رأس المال ثابت دائمًا عند $1,000 لجميع تجارب Paper الحالية.</div>
             <div>✓ لا نضيف مؤشرًا جديدًا قبل إثبات فائدته بالبيانات.</div>
           </div>
         </article>
@@ -208,7 +208,7 @@
 
         <article class="card">
           <div class="card-title">Lane Lab — PA Calibration</div>
-          <div class="minor">مقارنة ALIGNED / NEUTRAL / OPPOSED لكل SCALP / INTRADAY / SWING.</div>
+          <div class="minor">مقارنة ALIGNED / NEUTRAL / OPPOSED لكل FAST_SCALP / SCALP / INTRADAY / SWING.</div>
           <div class="table-wrap">
             <table>
               <thead><tr><th>Lane</th><th>PA State</th><th>Trades</th><th>W/L</th><th>WR</th><th>Net</th><th>Avg R</th></tr></thead>
@@ -232,7 +232,7 @@
 
         <article class="card">
           <div class="card-title">Lane Lab — Execution Plan Calibration</div>
-          <div class="minor">نفس المقارنة بشكل مستقل لكل SCALP / INTRADAY / SWING.</div>
+          <div class="minor">نفس المقارنة بشكل مستقل لكل FAST_SCALP / SCALP / INTRADAY / SWING.</div>
           <div class="table-wrap">
             <table>
               <thead><tr><th>Lane</th><th>Plan</th><th>Trades</th><th>W/L</th><th>WR</th><th>Net</th><th>Avg R</th></tr></thead>
@@ -244,6 +244,16 @@
     </section>
 
     <section id="scalplab" class="panel">
+      <article class="card fast-mode-card">
+        <div class="card-title">FAST SCALP — 1m / 3m Quick Mode</div>
+        <div class="principles">
+          <div>✓ 3m يحدد الاتجاه المصغر، 1m يحدد التنفيذ.</div>
+          <div>✓ 5m و15m لا يحتاجان توافقًا كاملًا؛ فقط يمنعان الدخول ضد معارضة قوية.</div>
+          <div>✓ Opportunity جديدة ممكنة مع كل شمعة 1m مغلقة، بعد انتهاء الصفقة السابقة.</div>
+          <div>✓ Expiry افتراضي 15 دقيقة، Minimum R:R = 1.00R.</div>
+          <div>✓ يُقاس بشكل مستقل في Lane Comparison Lab ولا يُفترض مسبقًا أنه أفضل.</div>
+        </div>
+      </article>
       <article class="card">
         <div class="card-title">Parallel Scalp Comparison</div>
         <div class="minor">A = 5m · B = 5m+3m · C = 5m+3m+1m · D = 5m Setup + 1m Execution</div>
@@ -300,7 +310,7 @@
       </div>
 
       <article class="card lane-compare-card">
-        <div class="card-title">Lane Comparison Lab — SCALP vs INTRADAY vs SWING</div>
+        <div class="card-title">Lane Comparison Lab — FAST SCALP vs SCALP vs INTRADAY vs SWING</div>
         <div class="minor">
           لكل مسار حساب Paper مستقل بنفس رأس المال ونفس المخاطرة. الحساب الرئيسي يبقى صفقة واحدة فقط.
           الترتيب هنا بحثي ولا يعني ضمان أرباح مستقبلية.

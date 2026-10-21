@@ -6,7 +6,7 @@ from .paper import PaperLedger
 
 class LaneComparisonLab:
     """
-    Independent paper accounts for SCALP / INTRADAY / SWING.
+    Independent paper accounts for FAST_SCALP / SCALP / INTRADAY / SWING.
 
     Purpose:
     measure each lane without the main account's "one trade globally" rule
@@ -15,7 +15,7 @@ class LaneComparisonLab:
     Research-only: these lab accounts never affect main-account P&L or decisions.
     """
 
-    LANES=("SCALP","INTRADAY","SWING")
+    LANES=("FAST_SCALP","SCALP","INTRADAY","SWING")
 
     def __init__(self,data_dir:Path,cfg:dict,start_balance:float):
         self.data_dir=Path(data_dir)

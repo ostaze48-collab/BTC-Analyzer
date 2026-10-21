@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 class PaperLedger:
     """
-    Primary virtual account only: SCALP + INTRADAY + SWING.
+    Primary virtual account: FAST_SCALP + SCALP + INTRADAY + SWING.
 
     V2.4 adds experiment history and performance analytics while preserving:
     - one main trade at a time,
@@ -41,7 +41,9 @@ class PaperLedger:
 
     def __init__(self,db_path,cfg):
         self.db_path=str(db_path)
-        self.default_start_balance=float(cfg.get("paper_start_balance",100.0))
+        self.default_start_balance=float(cfg.get("paper_start_balance",1000.0))
+        fixed=cfg.get("paper_fixed_start_balance")
+        self.fixed_start_balance=float(fixed) if fixed is not None else None
         self.start_balance=self.default_start_balance
         self.risk_pct=float(cfg.get("paper_risk_per_trade_pct",0.5))
         self.fee_bps=float(cfg.get("paper_fee_bps_per_side",0.0))
@@ -195,6 +197,31 @@ class PaperLedger:
                 "SELECT * FROM paper_experiments WHERE experiment_id=?",(eid,)
             ).fetchone()
 
+        # V2.8: paper capital is permanently fixed. Older active experiments
+        # with another balance are archived once; history is preserved.
+        if (
+            self.fixed_start_balance is not None and
+            abs(float(active["start_balance"])-self.fixed_start_balance)>1e-9
+        ):
+            now=time.time()
+            c.execute("""
+              UPDATE trades
+              SET status='RESET',close_ts=?,exit_price=entry,
+                  gross_pnl=0,net_pnl=0,realized_r=0,capture_efficiency_pct=0
+              WHERE experiment_id=? AND status='OPEN'
+            """,(now,active["experiment_id"]))
+            c.execute("""
+              UPDATE paper_experiments SET status='ARCHIVED',end_ts=?
+              WHERE experiment_id=? AND status='ACTIVE'
+            """,(now,active["experiment_id"]))
+            eid=self._create_experiment(
+                c,self.fixed_start_balance,
+                f"V2.8 fixed capital ${self.fixed_start_balance:.2f}"
+            )
+            active=c.execute(
+                "SELECT * FROM paper_experiments WHERE experiment_id=?",(eid,)
+            ).fetchone()
+
         self.current_experiment_id=active["experiment_id"]
         self.start_balance=float(active["start_balance"])
         self._set_setting(c,"start_balance",self.start_balance)
@@ -218,6 +245,8 @@ class PaperLedger:
         Previous trades remain stored and queryable under the archived experiment.
         """
         amount=float(amount)
+        if self.fixed_start_balance is not None and abs(amount-self.fixed_start_balance)>1e-9:
+            raise ValueError(f"Paper capital is fixed at ${self.fixed_start_balance:.2f}")
         if amount<1:
             raise ValueError("Capital must be at least 1")
         if amount>100000000:
@@ -707,7 +736,7 @@ class PaperLedger:
     def lane_stats(self):
         c=self.con()
         out={}
-        for lane in ("SCALP","INTRADAY","SWING"):
+        for lane in ("FAST_SCALP","SCALP","INTRADAY","SWING"):
             rows=c.execute("""
               SELECT * FROM trades
               WHERE experiment_id=? AND lane=?

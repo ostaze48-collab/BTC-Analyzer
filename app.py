@@ -37,46 +37,10 @@ def health():
 
 @app.post("/api/paper/capital")
 def set_paper_capital():
-    payload=request.get_json(silent=True) or {}
-    try:
-        amount=float(payload.get("amount"))
-        result=engine.paper.set_start_balance(amount,reset_results=True)
-        lane_lab_result=engine.lane_lab.reset_capital(amount)
-
-        # Refresh only paper-account fields immediately. Research/Shadow stay intact.
-        with engine.lock:
-            if isinstance(engine.state,dict):
-                engine.state["pnl"]=engine.paper.pnl_dashboard()
-                engine.state["open_positions"]=[]
-                engine.state["unrealized"]=engine.paper.unrealized_summary(
-                    engine.state.get("price")
-                )
-                engine.state["recent_trades"]=[]
-                engine.state["lane_stats"]=engine.paper.lane_stats()
-                engine.state["regime_performance"]=engine.paper.regime_stats()
-                engine.state["calibration_stats"]=engine.paper.calibration_stats()
-                engine.state["price_action_performance"]=engine.paper.price_action_stats()
-                engine.state["execution_plan_performance"]=engine.paper.execution_plan_stats()
-                engine.state["performance_analytics"]=engine.paper.analytics()
-                engine.state["time_performance"]=engine.paper.time_performance()
-                engine.state["experiments"]=engine.paper.experiment_history()
-                engine.state["lane_comparison"]=engine.lane_lab.summary(
-                    engine.state.get("price")
-                )
-                engine.state["lane_regime_comparison"]=engine.lane_lab.regime_comparison()
-                engine.state["lane_price_action_comparison"]=engine.lane_lab.price_action_comparison()
-                engine.state["lane_execution_plan_comparison"]=engine.lane_lab.execution_plan_comparison()
-                engine.state["risk_guard"]=engine.paper.risk_guard()
-
-        return jsonify({
-            "ok":True,
-            "message":"New paper experiment started with the selected capital.",
-            "lane_lab_reset":True,
-            "lane_lab":lane_lab_result,
-            **result
-        })
-    except Exception as e:
-        return jsonify({"ok":False,"error":str(e)}),400
+    return jsonify({
+        "ok":False,"fixed":True,"start_balance":1000.0,
+        "error":"Paper capital is permanently fixed at $1,000 in V2.8."
+    }),403
 
 
 @app.get("/api/paper/trades.csv")
@@ -102,7 +66,7 @@ def paper_trades_csv():
 def diag():
     s=engine.snapshot()
     return jsonify({
-        "app":"BTC Analyzer V2.7",
+        "app":"BTC Analyzer V2.8",
         "status":s.get("status"),
         "price":s.get("price"),
         "best_setup":(s.get("decision") or {}).get("best_setup"),

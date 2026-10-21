@@ -165,7 +165,7 @@ function renderShadow(shadow){
 }
 
 function renderLaneStats(stats){
-  $('laneStats').innerHTML=['SCALP','INTRADAY','SWING'].map(k=>{
+  $('laneStats').innerHTML=['FAST_SCALP','SCALP','INTRADAY','SWING'].map(k=>{
     const x=stats?.[k]||{};
     return `<tr><td>${k}</td><td>${x.trades||0}</td><td>${x.open||0}</td>
       <td>${x.wins||0}/${x.losses||0}</td><td>${num(x.win_rate||0,1)}%</td>
@@ -363,7 +363,7 @@ function renderExperimentHistory(rows){
 
 function renderLaneComparison(lab){
   const lanes=lab?.lanes||{};
-  const ranking=lab?.ranking||['SCALP','INTRADAY','SWING'];
+  const ranking=lab?.ranking||['FAST_SCALP','SCALP','INTRADAY','SWING'];
 
   $('laneComparison').innerHTML=ranking.map((lane,i)=>{
     const x=lanes[lane]||{};
@@ -507,6 +507,7 @@ function renderHealth(h,status){
     ['Spot',h?.spot_provider||'—'],['Futures',h?.futures_status||'—'],
     ['Bitbo',h?.bitbo_status||'—'],['Persistent DB',h?.persistent_storage?'ON':'OFF'],
     ['Closed candles',h?.closed_candle_analysis?'ON':'OFF'],['Live price separate',h?.live_price_separate?'ON':'OFF'],
+    ['FAST SCALP',h?.fast_scalp_enabled?'ON':'OFF'],['Fixed Capital',money(h?.fixed_paper_capital||1000)],
   ];
   $('healthGrid').innerHTML=items.map(([k,v])=>`<div class="health-item"><div class="label">${k}</div><b>${v}</b></div>`).join('');
   $('freshness').innerHTML=Object.entries(h?.data_freshness_sec||{}).map(([tf,v])=>`<div class="fresh"><div class="label">${tf}</div><b>${Math.round(v)}s</b></div>`).join('');
@@ -539,10 +540,7 @@ async function refresh(){
     $('bestSetupMeta').textContent=`${best.setup_grade||'—'} · Setup Score ${num(best.setup_score,0)} · ${shortId(bestOpp.opportunity_id)}`;
 
     $('balance').textContent=money(s.pnl?.balance);
-    $('pnlTimezone').textContent='Start '+money(s.pnl?.starting_capital)+' · '+shortId(s.pnl?.experiment_id)+' · '+(s.pnl?.timezone||'—');
-    if(document.activeElement!==$('capitalInput')){
-      $('capitalInput').value=Number(s.pnl?.starting_capital||100);
-    }
+    $('pnlTimezone').textContent='Fixed Start $1,000 · '+shortId(s.pnl?.experiment_id)+' · '+(s.pnl?.timezone||'—');
 
     $('marketRegime').textContent=s.market_regime?.regime||'—';
     $('marketRegime').className='hero-value '+(s.market_regime?.regime==='TREND'?'good':s.market_regime?.regime==='HIGH_VOL'?'bad':'warn');
@@ -551,7 +549,7 @@ async function refresh(){
     renderPnl(s.pnl);
     renderOpenTrades(s.open_positions,s.unrealized);
     renderRiskGuard(s.risk_guard);
-    $('lanes').innerHTML=['SCALP','INTRADAY','SWING'].map(k=>renderLane(s.decision?.lanes?.[k],s.lane_comparison?.lanes?.[k])).join('');
+    $('lanes').innerHTML=['FAST_SCALP','SCALP','INTRADAY','SWING'].map(k=>renderLane(s.decision?.lanes?.[k],s.lane_comparison?.lanes?.[k])).join('');
     renderContext(s.bitcoin_context);
     renderRecentTrades(s.recent_trades);
     renderTimeframes(s.analysis);
@@ -581,42 +579,5 @@ async function refresh(){
     $('statusBadge').className='badge bad';
   }
 }
-$('applyCapital').addEventListener('click',async()=>{
-  const amount=Number($('capitalInput').value);
-  if(!Number.isFinite(amount) || amount<1){
-    $('capitalMessage').textContent='أدخل قيمة رأس مال صحيحة.';
-    $('capitalMessage').className='minor bad';
-    return;
-  }
-
-  const ok=confirm(
-    `سيتم بدء Experiment جديد برأس مال $${amount.toFixed(2)}. `+
-    `التجربة الحالية ستتحول إلى ARCHIVED وتبقى نتائجها محفوظة للمقارنة. `+
-    `إذا كانت هناك صفقة Main مفتوحة فستُغلق كـ RESET بدون احتساب ربح أو خسارة. `+
-    `هل تريد المتابعة؟`
-  );
-  if(!ok) return;
-
-  $('applyCapital').disabled=true;
-  $('capitalMessage').textContent='جارٍ تطبيق رأس المال...';
-  try{
-    const r=await fetch('/api/paper/capital',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({amount})
-    });
-    const x=await r.json();
-    if(!r.ok || !x.ok) throw new Error(x.error||'Failed');
-    $('capitalMessage').textContent=`تم بدء Experiment ${shortId(x.experiment_id)} برأس مال $${Number(x.start_balance).toFixed(2)}.`;
-    $('capitalMessage').className='minor good';
-    await refresh();
-  }catch(e){
-    $('capitalMessage').textContent='خطأ: '+e.message;
-    $('capitalMessage').className='minor bad';
-  }finally{
-    $('applyCapital').disabled=false;
-  }
-});
-
 refresh();
 setInterval(refresh,15000);
