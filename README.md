@@ -1,100 +1,133 @@
-# BTC Analyzer V2.2 — Calibration & Trade Quality
+# BTC Analyzer V2.4 — Performance Analytics & Experiment History
 
-V2.2 continues the current rule: do not add new indicators unless the data proves they add value.
-This release focuses on calibration, opportunity lifecycle and execution-quality measurement.
+V2.4 keeps the Quality-First methodology. No new market indicator is added.
 
-## Stable Opportunity IDs
-Each evolving SCALP / INTRADAY / SWING setup gets one persistent ID instead of being counted again every engine cycle.
+This release focuses on understanding whether the existing system is actually
+performing well and on making capital experiments comparable.
 
-Lifecycle:
-- FORMING
-- READY
-- TRIGGERED
-- CLOSED
+## One main trade only
 
-## Stricter A+
-SCALP A+ is capped to A when 15m support or 3m confirmation is missing.
-The trade may still be allowed at A if the remaining Quality-First rules pass.
+The main paper account still allows only ONE open trade at a time across:
+- SCALP
+- INTRADAY
+- SWING
 
-## Clearer terminology
-- Setup Score is not a probability.
-- LONG Direction Score / SHORT Direction Score are directional scores, not probabilities.
-- Regime Strength replaces the misleading word Confidence in the UI.
+If several lanes are actionable in the same cycle:
+1. highest Setup Score wins,
+2. Available R:R breaks a tie.
 
-## Entry Quality Diagnostics
-Every lane now reports:
-- Entry Timing: EARLY / OPTIMAL / ACCEPTABLE / LATE
-- Chasing Risk: LOW / MEDIUM / HIGH
-- Available R:R
-- R:R Gate PASS / BLOCK
-- structural obstacle when available from existing support/resistance
+Shadow A/B/C/D remains research-only and does not enter main-account P&L.
 
-No new indicator is used for these diagnostics.
+## Capital changes now create experiments
 
-## R:R Gate
-Minimum available structural R:R:
-- SCALP: 1.20R
-- INTRADAY: 1.40R
-- SWING: 1.60R
+Changing Simulation Capital no longer destroys previous results.
 
-A setup remains WAIT if available R:R is below its lane threshold.
+Example:
+- Experiment 1: $100
+- Experiment 2: $1,000
+- Experiment 3: $5,000
 
-## Chasing protection
-HIGH chasing risk keeps the lane at WAIT.
-This uses the existing wave state and overextension flag.
-
-## MFE / MAE
-Primary paper trades now track:
-- MFE price / MFE in R
-- MAE price / MAE in R
-
-## Capture Efficiency
-Closed trades calculate positive realized R / MFE R, capped at 0–100%.
-
-## Performance by Market Regime
-Actual closed primary trades are grouped by lane + market regime with:
+Each experiment has its own:
+- starting capital
 - trades
-- W/L and win rate
-- net P&L
-- Avg R
-- Avg MFE / MAE
-- Capture Efficiency
+- W/L
+- realized net P&L
+- Return %
+- Profit Factor
+- Total R
+- Max Drawdown
 
-Market Regime remains research-only in V2.2.
+When a new capital value is applied:
+- current experiment becomes ARCHIVED,
+- a new ACTIVE experiment is created,
+- old trades remain stored,
+- current P&L starts from zero for the new experiment,
+- Research and Shadow data remain untouched.
 
-## Calibration tables
-Research compares actual closed trades by:
-- Entry Timing
-- Chasing Risk
+If a main trade is still open during a manual experiment change, it is stored as
+RESET with zero P&L rather than being incorrectly classified as a market win/loss.
 
-## Non-destructive database migration
-V2.2 keeps:
-- paper_v2.db
-- research_v2.db
-- shadow_v2.db
+## Performance tab
 
-and adds:
-- opportunities_v2.db
+V2.4 adds a dedicated Performance tab.
 
-Missing V2.2 columns are added automatically to existing V2.0/V2.1 databases.
-Historical trades are not deleted.
+### Equity Curve
+Built only from realized main-account trades.
 
-New migrated fields include:
-- opportunity_id
-- market_regime
-- entry_timing
-- chasing_risk
-- available_rr
-- structural_obstacle
-- MFE / MAE
-- capture efficiency
+Unrealized P&L is never inserted into the equity curve.
 
-Old historical rows may show blank/UNKNOWN for fields that did not exist when recorded.
+### Main analytics
+- Return %
+- Net P&L
+- Max Drawdown $ and %
+- Expectancy $
+- Expectancy R
+- Average Win
+- Average Loss
+- Payoff Ratio
+- Profit Factor
+- Recovery Factor
+- Best Trade
+- Worst Trade
+- Maximum Win Streak
+- Maximum Loss Streak
+- Current Streak
 
-## Render persistence
-Keep a Persistent Disk mounted at /var/data and:
+### Time analysis
+Closed trades are grouped by:
+- entry hour
+- weekday
 
-DATA_DIR=/var/data
+using the configured report timezone.
 
-## Paper / Research only
-V2.2 sends no real orders and does not guarantee profit.
+This is research information only. V2.4 does not automatically block a particular
+hour or weekday based on small samples.
+
+## Experiment History
+
+All experiments are displayed separately so different starting-capital tests are
+not mixed.
+
+This is especially important when comparing $100 versus $1,000 tests: absolute
+profit changes with position size, while Return %, R and Drawdown are more useful
+for judging the decision logic.
+
+## CSV export
+
+The current experiment's main trades can be exported from:
+
+`/api/paper/trades.csv`
+
+or from the Dashboard button.
+
+## Database migration
+
+V2.4 continues using:
+
+`paper_v2.db`
+
+and automatically adds:
+- `experiment_id` to existing trades,
+- `paper_experiments` table,
+- current experiment settings.
+
+Existing V2.0–V2.3 trades are attached to one migrated experiment instead of being
+deleted.
+
+## Persistent Render storage
+
+Keep a Render Persistent Disk mounted at:
+
+`/var/data`
+
+with:
+
+`DATA_DIR=/var/data`
+
+Without persistent storage, experiment history cannot survive instance replacement.
+
+## Important
+
+Paper / Research only.
+No real order is sent.
+No metric guarantees future profit.

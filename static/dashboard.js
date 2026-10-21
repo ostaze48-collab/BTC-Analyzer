@@ -44,6 +44,7 @@ function renderPnl(pnl){
         <span>R: ${num(x.total_r||0,2)}R</span>
         <span>W/L: ${x.wins||0}/${x.losses||0}</span>
         <span>WR: ${num(x.win_rate||0,1)}%</span>
+        <span>Return: ${pct(x.return_pct||0,2)}</span>
       </div>
     </article>`;
   }).join('');
@@ -236,6 +237,108 @@ function renderOpportunityEvents(rows){
   </tr>`).join('');
 }
 
+function renderPerformanceKpis(a){
+  const items=[
+    ['Experiment',shortId(a?.experiment_id),'neutral'],
+    ['Return',pct(a?.return_pct||0,2),(a?.return_pct||0)>0?'good':(a?.return_pct||0)<0?'bad':'neutral'],
+    ['Net P&L',money(a?.net_pnl||0),(a?.net_pnl||0)>0?'good':(a?.net_pnl||0)<0?'bad':'neutral'],
+    ['Max Drawdown',pct(-(a?.max_drawdown_pct||0),2),(a?.max_drawdown_pct||0)>0?'bad':'neutral'],
+    ['Expectancy',num(a?.expectancy_r||0,2)+'R',(a?.expectancy_r||0)>0?'good':(a?.expectancy_r||0)<0?'bad':'neutral'],
+    ['Profit Factor',a?.profit_factor>=900?'∞':num(a?.profit_factor||0,2),(a?.profit_factor||0)>1?'good':'warn'],
+    ['Payoff',a?.payoff_ratio>=900?'∞':num(a?.payoff_ratio||0,2),(a?.payoff_ratio||0)>1?'good':'warn'],
+    ['Recovery',a?.recovery_factor>=900?'∞':num(a?.recovery_factor||0,2),(a?.recovery_factor||0)>1?'good':'warn'],
+    ['Best Trade',money(a?.best_trade_usd||0),(a?.best_trade_usd||0)>0?'good':'neutral'],
+    ['Worst Trade',money(a?.worst_trade_usd||0),(a?.worst_trade_usd||0)<0?'bad':'neutral'],
+    ['Max Win Streak',String(a?.max_win_streak||0),'good'],
+    ['Max Loss Streak',String(a?.max_loss_streak||0),(a?.max_loss_streak||0)>0?'bad':'neutral'],
+  ];
+  $('performanceKpis').innerHTML=items.map(([k,v,c])=>`<div class="perf-kpi">
+    <div class="label">${k}</div><div class="perf-value ${c}">${v}</div>
+  </div>`).join('');
+}
+
+function drawEquityCurve(curve){
+  const canvas=$('equityCanvas');
+  if(!canvas) return;
+  const ctx=canvas.getContext('2d');
+  const cssW=Math.max(320,canvas.clientWidth||1200);
+  const cssH=320;
+  const dpr=window.devicePixelRatio||1;
+  canvas.width=Math.round(cssW*dpr);
+  canvas.height=Math.round(cssH*dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,cssW,cssH);
+
+  const data=curve||[];
+  if(data.length<2){
+    ctx.font='13px Tahoma';
+    ctx.fillStyle='#8ba2b8';
+    ctx.textAlign='center';
+    ctx.fillText('تظهر Equity Curve بعد إغلاق الصفقات.',cssW/2,cssH/2);
+    return;
+  }
+
+  const pad={l:58,r:18,t:18,b:32};
+  const w=cssW-pad.l-pad.r, h=cssH-pad.t-pad.b;
+  const vals=data.map(x=>Number(x.equity));
+  let min=Math.min(...vals), max=Math.max(...vals);
+  if(max===min){max+=1;min-=1}
+  const margin=(max-min)*.10;
+  min-=margin;max+=margin;
+
+  const x=i=>pad.l+(i/(data.length-1))*w;
+  const y=v=>pad.t+(max-v)/(max-min)*h;
+
+  ctx.strokeStyle='#1d3246';
+  ctx.lineWidth=1;
+  ctx.fillStyle='#8ba2b8';
+  ctx.font='10px Tahoma';
+  ctx.textAlign='right';
+  for(let i=0;i<=4;i++){
+    const yy=pad.t+(i/4)*h;
+    const val=max-(i/4)*(max-min);
+    ctx.beginPath();ctx.moveTo(pad.l,yy);ctx.lineTo(cssW-pad.r,yy);ctx.stroke();
+    ctx.fillText('$'+val.toFixed(2),pad.l-6,yy+3);
+  }
+
+  ctx.strokeStyle='#67adff';
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  data.forEach((pt,i)=>{
+    const xx=x(i), yy=y(Number(pt.equity));
+    if(i===0)ctx.moveTo(xx,yy);else ctx.lineTo(xx,yy);
+  });
+  ctx.stroke();
+
+  const last=data[data.length-1];
+  ctx.fillStyle='#edf6ff';
+  ctx.textAlign='left';
+  ctx.font='11px Tahoma';
+  ctx.fillText('Current '+money(last.equity),pad.l,pad.t+12);
+}
+
+function performanceRows(rows){
+  return (rows||[]).map(x=>`<tr>
+    <td>${x.label}</td><td>${x.trades}</td><td>${x.wins}/${x.losses}</td>
+    <td>${num(x.win_rate,1)}%</td>
+    <td class="${x.net_pnl>0?'good':x.net_pnl<0?'bad':'neutral'}">${money(x.net_pnl)}</td>
+    <td>${num(x.avg_r,2)}R</td>
+  </tr>`).join('');
+}
+
+function renderExperimentHistory(rows){
+  $('experimentHistory').innerHTML=(rows||[]).map(x=>`<tr>
+    <td><code title="${x.experiment_id}">${shortId(x.experiment_id)}</code></td>
+    <td class="${x.status==='ACTIVE'?'good':'neutral'}">${x.status}</td>
+    <td>${money(x.start_balance)}</td><td>${money(x.ending_balance)}</td>
+    <td>${x.trades}</td><td>${x.wins}/${x.losses}</td><td>${num(x.win_rate,1)}%</td>
+    <td class="${x.net_pnl>0?'good':x.net_pnl<0?'bad':'neutral'}">${money(x.net_pnl)}</td>
+    <td class="${x.return_pct>0?'good':x.return_pct<0?'bad':'neutral'}">${pct(x.return_pct)}</td>
+    <td class="${x.max_drawdown_pct>0?'bad':'neutral'}">${pct(-x.max_drawdown_pct)}</td>
+    <td>${num(x.total_r,2)}R</td><td>${x.profit_factor>=900?'∞':num(x.profit_factor,2)}</td>
+  </tr>`).join('');
+}
+
 function renderHealth(h,status){
   const items=[
     ['Engine',h?.engine_version||'—'],['Status',status||'—'],
@@ -276,7 +379,10 @@ async function refresh(){
     $('bestSetupMeta').textContent=`${best.setup_grade||'—'} · Setup Score ${num(best.setup_score,0)} · ${shortId(bestOpp.opportunity_id)}`;
 
     $('balance').textContent=money(s.pnl?.balance);
-    $('pnlTimezone').textContent='P&L timezone '+(s.pnl?.timezone||'—');
+    $('pnlTimezone').textContent='Start '+money(s.pnl?.starting_capital)+' · '+shortId(s.pnl?.experiment_id)+' · '+(s.pnl?.timezone||'—');
+    if(document.activeElement!==$('capitalInput')){
+      $('capitalInput').value=Number(s.pnl?.starting_capital||100);
+    }
 
     $('marketRegime').textContent=s.market_regime?.regime||'—';
     $('marketRegime').className='hero-value '+(s.market_regime?.regime==='TREND'?'good':s.market_regime?.regime==='HIGH_VOL'?'bad':'warn');
@@ -296,11 +402,54 @@ async function refresh(){
     $('entryTimingCalibration').innerHTML=calibrationRows(s.calibration_stats?.entry_timing);
     $('chasingCalibration').innerHTML=calibrationRows(s.calibration_stats?.chasing_risk);
     renderOpportunityEvents(s.opportunity_events);
+    renderPerformanceKpis(s.performance_analytics);
+    drawEquityCurve(s.performance_analytics?.equity_curve);
+    $('hourPerformance').innerHTML=performanceRows(s.time_performance?.hour);
+    $('weekdayPerformance').innerHTML=performanceRows(s.time_performance?.weekday);
+    $('timePerfTz').textContent='Entry time · '+(s.time_performance?.timezone||'—');
+    renderExperimentHistory(s.experiments);
     renderHealth(s.health,status);
   }catch(e){
     $('statusBadge').textContent='UI ERROR';
     $('statusBadge').className='badge bad';
   }
 }
+$('applyCapital').addEventListener('click',async()=>{
+  const amount=Number($('capitalInput').value);
+  if(!Number.isFinite(amount) || amount<1){
+    $('capitalMessage').textContent='أدخل قيمة رأس مال صحيحة.';
+    $('capitalMessage').className='minor bad';
+    return;
+  }
+
+  const ok=confirm(
+    `سيتم بدء Experiment جديد برأس مال $${amount.toFixed(2)}. `+
+    `التجربة الحالية ستتحول إلى ARCHIVED وتبقى نتائجها محفوظة للمقارنة. `+
+    `إذا كانت هناك صفقة Main مفتوحة فستُغلق كـ RESET بدون احتساب ربح أو خسارة. `+
+    `هل تريد المتابعة؟`
+  );
+  if(!ok) return;
+
+  $('applyCapital').disabled=true;
+  $('capitalMessage').textContent='جارٍ تطبيق رأس المال...';
+  try{
+    const r=await fetch('/api/paper/capital',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({amount})
+    });
+    const x=await r.json();
+    if(!r.ok || !x.ok) throw new Error(x.error||'Failed');
+    $('capitalMessage').textContent=`تم بدء Experiment ${shortId(x.experiment_id)} برأس مال $${Number(x.start_balance).toFixed(2)}.`;
+    $('capitalMessage').className='minor good';
+    await refresh();
+  }catch(e){
+    $('capitalMessage').textContent='خطأ: '+e.message;
+    $('capitalMessage').className='minor bad';
+  }finally{
+    $('applyCapital').disabled=false;
+  }
+});
+
 refresh();
 setInterval(refresh,15000);

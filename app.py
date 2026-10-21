@@ -1,7 +1,7 @@
 from __future__ import annotations
-import json, os, threading
+import csv, io, json, os, threading
 from pathlib import Path
-from flask import Flask, jsonify, send_from_directory
+from flask import Flask, jsonify, send_from_directory, request, Response
 
 from engine import Engine
 
@@ -35,11 +35,63 @@ def health():
         "last_success_age_sec":(s.get("health") or {}).get("last_success_age_sec"),
     })
 
+@app.post("/api/paper/capital")
+def set_paper_capital():
+    payload=request.get_json(silent=True) or {}
+    try:
+        amount=float(payload.get("amount"))
+        result=engine.paper.set_start_balance(amount,reset_results=True)
+
+        # Refresh only paper-account fields immediately. Research/Shadow stay intact.
+        with engine.lock:
+            if isinstance(engine.state,dict):
+                engine.state["pnl"]=engine.paper.pnl_dashboard()
+                engine.state["open_positions"]=[]
+                engine.state["unrealized"]=engine.paper.unrealized_summary(
+                    engine.state.get("price")
+                )
+                engine.state["recent_trades"]=[]
+                engine.state["lane_stats"]=engine.paper.lane_stats()
+                engine.state["regime_performance"]=engine.paper.regime_stats()
+                engine.state["calibration_stats"]=engine.paper.calibration_stats()
+                engine.state["performance_analytics"]=engine.paper.analytics()
+                engine.state["time_performance"]=engine.paper.time_performance()
+                engine.state["experiments"]=engine.paper.experiment_history()
+                engine.state["risk_guard"]=engine.paper.risk_guard()
+
+        return jsonify({
+            "ok":True,
+            "message":"New paper experiment started with the selected capital.",
+            **result
+        })
+    except Exception as e:
+        return jsonify({"ok":False,"error":str(e)}),400
+
+
+@app.get("/api/paper/trades.csv")
+def paper_trades_csv():
+    rows=engine.paper.export_rows()
+    if not rows:
+        return Response("no data\n",mimetype="text/csv")
+    buf=io.StringIO()
+    w=csv.DictWriter(buf,fieldnames=list(rows[0].keys()))
+    w.writeheader()
+    w.writerows(rows)
+    return Response(
+        buf.getvalue(),
+        mimetype="text/csv",
+        headers={
+            "Content-Disposition":
+            f"attachment; filename=paper_{engine.paper.get_experiment_id()}.csv"
+        }
+    )
+
+
 @app.get("/diag")
 def diag():
     s=engine.snapshot()
     return jsonify({
-        "app":"BTC Analyzer V2.2",
+        "app":"BTC Analyzer V2.4",
         "status":s.get("status"),
         "price":s.get("price"),
         "best_setup":(s.get("decision") or {}).get("best_setup"),

@@ -14,7 +14,7 @@ from btc_analyzer.regime import MarketRegimeEngine
 from btc_analyzer.opportunity import OpportunityTracker
 
 class Engine:
-    VERSION="V2.2"
+    VERSION="V2.4"
 
     def __init__(self,root:Path,cfg:dict):
         self.root=root
@@ -106,6 +106,9 @@ class Engine:
         lane_stats=self.paper.lane_stats()
         regime_performance=self.paper.regime_stats()
         calibration_stats=self.paper.calibration_stats()
+        performance_analytics=self.paper.analytics()
+        time_performance=self.paper.time_performance()
+        experiments=self.paper.experiment_history()
         recent_trades=self.paper.recent()
         research_stats=self.research.stats()
         shadow_stats=self.shadow.stats()
@@ -150,6 +153,9 @@ class Engine:
             "lane_stats":lane_stats,
             "regime_performance":regime_performance,
             "calibration_stats":calibration_stats,
+            "performance_analytics":performance_analytics,
+            "time_performance":time_performance,
+            "experiments":experiments,
             "recent_trades":recent_trades,
             "active_opportunities":active_opportunities,
             "recent_opportunities":recent_opportunities,

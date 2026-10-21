@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>BTC Analyzer V2.2</title>
+<title>BTC Analyzer V2.4</title>
 <link rel="stylesheet" href="/static/dashboard.css">
 </head>
 <body>
 <div class="shell">
   <header class="topbar">
     <div>
-      <h1>BTC Analyzer <span>V2.2</span></h1>
+      <h1>BTC Analyzer <span>V2.4</span></h1>
       <div class="subtitle">Quality First · Closed-Candle Analysis · Scalp / Intraday / Swing · Research & Paper P&amp;L</div>
     </div>
     <div class="topmeta">
@@ -24,6 +24,7 @@
     <button class="tab active" data-tab="overview">الرئيسية</button>
     <button class="tab" data-tab="timeframes">الفريمات</button>
     <button class="tab" data-tab="scalplab">Scalp Lab</button>
+    <button class="tab" data-tab="performance">Performance</button>
     <button class="tab" data-tab="research">Research</button>
     <button class="tab" data-tab="health">System Health</button>
   </nav>
@@ -60,6 +61,20 @@
         </article>
       </div>
 
+      <div class="section-title">رأس المال الافتراضي</div>
+      <article class="card capital-control">
+        <div>
+          <div class="card-title">Simulation Capital</div>
+          <div class="minor">النظام الرئيسي يفتح صفقة واحدة فقط في أي لحظة. تغيير رأس المال يبدأ Experiment جديدًا؛ التجربة السابقة تُؤرشف وتبقى محفوظة للمقارنة.</div>
+        </div>
+        <div class="capital-actions">
+          <input id="capitalInput" type="number" min="1" step="1" placeholder="100">
+          <button id="applyCapital" class="action-btn">تطبيق رأس المال وبدء تجربة جديدة</button>
+          <a class="action-btn link-btn" href="/api/paper/trades.csv">تصدير صفقات التجربة CSV</a>
+        </div>
+        <div id="capitalMessage" class="minor"></div>
+      </article>
+
       <div class="section-title">عداد الربح والخسارة المحققة</div>
       <div id="pnlGrid" class="pnl-grid"></div>
 
@@ -72,7 +87,7 @@
           <div id="contextBox"></div>
         </article>
         <article class="card">
-          <div class="card-title">منهجية V2.2</div>
+          <div class="card-title">منهجية V2.4</div>
           <div class="principles">
             <div>✓ التحليل الفني يستخدم الشموع المغلقة فقط.</div>
             <div>✓ السعر الحي يستخدم للتنفيذ الافتراضي فقط.</div>
@@ -155,6 +170,52 @@
           <table>
             <thead><tr><th>Lane</th><th>Trades</th><th>Open</th><th>W/L</th><th>Win Rate</th><th>Net</th><th>Avg R</th><th>PF</th></tr></thead>
             <tbody id="laneStats"></tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+
+    <section id="performance" class="panel">
+      <div class="section-title">Performance Analytics — التجربة الحالية</div>
+      <div id="performanceKpis" class="performance-kpis"></div>
+
+      <article class="card">
+        <div class="card-title">Equity Curve</div>
+        <div class="minor">الرسم يعتمد على الأرباح والخسائر المحققة فقط، وليس Unrealized P&L.</div>
+        <div class="chart-wrap">
+          <canvas id="equityCanvas" width="1200" height="320"></canvas>
+        </div>
+      </article>
+
+      <div class="two-col">
+        <article class="card">
+          <div class="card-title">الأداء حسب ساعة الدخول</div>
+          <div class="minor" id="timePerfTz">—</div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Hour</th><th>Trades</th><th>W/L</th><th>WR</th><th>Net</th><th>Avg R</th></tr></thead>
+              <tbody id="hourPerformance"></tbody>
+            </table>
+          </div>
+        </article>
+        <article class="card">
+          <div class="card-title">الأداء حسب يوم الأسبوع</div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Day</th><th>Trades</th><th>W/L</th><th>WR</th><th>Net</th><th>Avg R</th></tr></thead>
+              <tbody id="weekdayPerformance"></tbody>
+            </table>
+          </div>
+        </article>
+      </div>
+
+      <article class="card">
+        <div class="card-title">Experiment History</div>
+        <div class="minor">كل تغيير لرأس المال يبدأ تجربة مستقلة؛ لا تختلط النتائج بين التجارب.</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Experiment</th><th>Status</th><th>Start Capital</th><th>End Balance</th><th>Trades</th><th>W/L</th><th>WR</th><th>Net</th><th>Return</th><th>Max DD</th><th>Total R</th><th>PF</th></tr></thead>
+            <tbody id="experimentHistory"></tbody>
           </table>
         </div>
       </article>
