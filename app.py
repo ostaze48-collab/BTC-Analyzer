@@ -1,51 +1,50 @@
 from __future__ import annotations
-import csv, io, json, os, threading
+import json, os, threading
 from pathlib import Path
-from flask import Flask, jsonify, Response
+from flask import Flask, jsonify, send_from_directory
+
 from engine import Engine
 
 ROOT=Path(__file__).resolve().parent
 CFG=json.loads((ROOT/"config.json").read_text(encoding="utf-8"))
-app=Flask(__name__)
+
+app=Flask(__name__,static_folder=None)
 engine=Engine(ROOT,CFG)
 threading.Thread(target=engine.run,daemon=True).start()
 
-DASHBOARD_HTML='<!doctype html><html lang="ar" dir="rtl"><head>\n<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">\n<title>BTC Analyzer V1.6</title>\n<style>\n:root{--bg:#071019;--p:#0d1824;--p2:#101e2c;--line:#203246;--txt:#eff6ff;--muted:#8da3b8;--g:#2bd99f;--r:#ff657d;--y:#ffc85c;--b:#62a9ff}\n*{box-sizing:border-box}body{margin:0;background:#071019;color:var(--txt);font-family:Tahoma,Arial,sans-serif}.w{max-width:1550px;margin:auto;padding:13px}.top{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap}.brand h1{margin:0;font-size:21px}.sub,.lab,.note{color:var(--muted);font-size:11px}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:9px;margin-top:10px}.c,.metric{background:linear-gradient(180deg,var(--p2),var(--p));border:1px solid var(--line);border-radius:14px;padding:12px}.s12{grid-column:span 12}.s6{grid-column:span 6}.s4{grid-column:span 4}.s3{grid-column:span 3}.v{font-size:25px;font-weight:800;margin-top:5px}.g{color:var(--g)}.r{color:var(--r)}.y{color:var(--y)}.title{font-weight:800;margin-bottom:9px}.pill,.tag{display:inline-block;padding:5px 8px;border:1px solid var(--line);border-radius:999px;background:#0a1622;font-size:10px}.lanes{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}.ctxgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}.lane{background:#091521;border:1px solid var(--line);border-radius:12px;padding:12px}.row{display:flex;justify-content:space-between;gap:8px;align-items:center}.plan{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px}.mini{background:#07121c;border:1px solid var(--line);border-radius:9px;padding:7px;text-align:center}.bar{height:6px;background:#06101a;border-radius:9px;overflow:hidden;margin-top:5px}.fill{height:100%;background:var(--b)}table{width:100%;border-collapse:collapse;font-size:11px}th,td{padding:7px;border-bottom:1px solid var(--line);white-space:nowrap;text-align:right}.tw{overflow:auto;max-height:330px}.ltr{direction:ltr;text-align:center}.btn{color:var(--txt);text-decoration:none;border:1px solid var(--line);padding:6px 9px;border-radius:8px;font-size:11px}.tfgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}.tf{background:#091521;border:1px solid var(--line);border-radius:10px;padding:7px;text-align:center}.tf b{display:block;margin:3px 0}.reason{padding:7px;margin:5px 0;background:#091521;border-right:3px solid var(--y);border-radius:7px;font-size:11px}\n@media(max-width:900px){.s6,.s4,.s3{grid-column:span 12}.lanes{grid-template-columns:1fr}.ctxgrid{grid-template-columns:repeat(2,1fr)}.tfgrid{grid-template-columns:repeat(3,1fr)}}@media(max-width:520px){.plan,.tfgrid{grid-template-columns:repeat(2,1fr)}}\n</style></head><body><div class="w">\n<div class="top"><div class="brand"><h1>BTC Analyzer V1.6</h1><div class="sub">Scalp + Intraday + Swing · Higher-TF Permission · Parallel Shadow Comparison</div></div><div><a class="btn" href="/api/research.csv">Research CSV</a> <span class="pill" id="status">...</span> <span class="pill">Paper/Research فقط</span></div></div>\n\n<div class="grid">\n<div class="c s3"><div class="lab">BTC/USDT</div><div class="v ltr" id="price">—</div></div>\n<div class="c s3"><div class="lab">General Bias</div><div class="v" id="bias">—</div><div class="lab" id="biasScore"></div></div>\n<div class="c s3"><div class="lab">Main Signal</div><div class="v" id="mainAction">—</div><div class="lab" id="mainQuality"></div></div>\n<div class="c s3"><div class="lab">Research Snapshots</div><div class="v ltr" id="snapshots">0</div><div class="lab" id="storage"></div></div>\n\n<div class="c s12"><div class="title">Bitcoin Context Engine</div>\n<div class="ctxgrid">\n<div class="metric"><div class="lab">Context Regime</div><div class="v" style="font-size:20px" id="ctxRegime">—</div><div class="lab" id="ctxScore"></div></div>\n<div class="metric"><div class="lab">Mayer Multiple</div><div class="v ltr" style="font-size:20px" id="ctxMayer">—</div></div>\n<div class="metric"><div class="lab">200W MA</div><div class="v ltr" style="font-size:20px" id="ctx200w">—</div><div class="lab" id="ctx200wDist"></div></div>\n<div class="metric"><div class="lab">Bitbo API</div><div class="v" style="font-size:20px" id="ctxBitbo">—</div><div class="lab">اختياري — يحتاج BITBO_API_KEY</div></div>\n</div>\n<div class="tw" style="margin-top:8px"><table><thead><tr><th>Realized Price</th><th>MVRV</th><th>NUPL</th><th>SOPR</th><th>ETF 7d avg</th><th>New Supply 7d</th><th>ETF - Supply</th></tr></thead><tbody><tr id="ctxRemote"></tr></tbody></table></div>\n<div class="note" style="margin-top:7px">الـContext لا يفتح صفقة وحده ولا يعمل Veto مباشرًا؛ يغيّر Direction Permission بشكل محدود فقط.</div>\n</div>\n<div class="c s12"><div class="title">3 مسارات مستقلة</div><div class="lanes" id="lanes"></div></div>\n\n<div class="c s12"><div class="title">Parallel Scalp Comparison — نفس الاتجاه العام، شروط دخول مختلفة</div>\n<div class="note">A: 5m فقط · B: 5m+3m · C: 5m+3m+1m · D: 5m Setup + 1m Execution. المقارنة تسجل التأخير، Confirmation Cost، والفرص التي التقطها Base ولم تلتقطها النسخ الأكثر تشددًا.</div>\n<div class="tw" style="margin-top:8px"><table><thead><tr><th>Strategy</th><th>Trades</th><th>W/L</th><th>Win Rate</th><th>PF</th><th>Avg R</th><th>Delay</th><th>Confirmation Cost</th><th>Missed</th></tr></thead><tbody id="shadow"></tbody></table></div>\n</div>\n\n<div class="c s6"><div class="title">خريطة الفريمات</div><div class="tfgrid" id="tfgrid"></div></div>\n<div class="c s6"><div class="title">Lane Paper Performance</div><div class="tw"><table><thead><tr><th>Lane</th><th>Trades</th><th>Open</th><th>W/L</th><th>WR</th><th>PF</th><th>Avg R</th></tr></thead><tbody id="laneStats"></tbody></table></div></div>\n\n<div class="c s6"><div class="title">Veto & Warnings</div><div id="warnings"></div></div>\n<div class="c s6"><div class="title">لماذا Main = WAIT؟</div><div id="why"></div></div>\n\n<div class="c s12"><div class="title">Technical vs Bitcoin Context — Research</div><div class="tw"><table><thead><tr><th>Context</th><th>Samples</th><th>Aligned 1H</th><th>Aligned 4H</th></tr></thead><tbody id="contextCompare"></tbody></table></div></div>\n<div class="c s12"><div class="title">Recent Shadow Trades</div><div class="tw"><table><thead><tr><th>Strategy</th><th>Side</th><th>Entry</th><th>Status</th><th>Delay</th><th>Cost</th><th>R</th></tr></thead><tbody id="recentShadow"></tbody></table></div></div>\n</div></div>\n\n<script>\nconst $=id=>document.getElementById(id);\nconst fmt=(x,d=2)=>x==null?\'—\':Number(x).toLocaleString(\'en-US\',{minimumFractionDigits:d,maximumFractionDigits:d});\nconst pct=x=>x==null?\'—\':(Number(x)>=0?\'+\':\'\')+Number(x).toFixed(3)+\'%\';\nfunction cls(x){if([\'BULLISH\',\'LONG\',\'UP\',\'READY\',\'TRIGGERED\',\'A\',\'A+\'].includes(x))return\'g\';if([\'BEARISH\',\'SHORT\',\'DOWN\',\'BLOCKED\',\'LOSS\'].includes(x))return\'r\';return\'y\'}\nfunction tfCard(tf,a){return `<div class="tf"><span class="lab">${tf}</span><b class="${cls(a.trend)}">${a.trend}</b><span class="lab">${a.structure}<br>${a.wave_direction} · ${a.wave_state}</span></div>`}\nfunction planBox(p){return `<div class="plan"><div class="mini"><span class="lab">Entry</span><div class="ltr">${fmt(p.entry)}</div></div><div class="mini"><span class="lab">SL</span><div class="ltr">${fmt(p.sl)}</div></div><div class="mini"><span class="lab">TP1</span><div class="ltr">${fmt(p.tp1)}</div></div><div class="mini"><span class="lab">TP2</span><div class="ltr">${fmt(p.tp2)}</div></div></div>`}\nasync function refresh(){\n const s=await (await fetch(\'/api/state\')).json();$(\'status\').textContent=s.status||\'...\';if(s.status!==\'OK\')return;\n $(\'price\').textContent=\'$\'+fmt(s.price);$(\'bias\').textContent=s.bias;$(\'bias\').className=\'v \'+cls(s.bias);$(\'biasScore\').textContent=\'Score \'+(Number(s.bias_score)*100).toFixed(0);\n $(\'mainAction\').textContent=s.action;$(\'mainAction\').className=\'v \'+cls(s.action);$(\'mainQuality\').textContent=`Quality ${s.quality} · ${Number(s.quality_score).toFixed(0)}/100`;\n $(\'snapshots\').textContent=s.research?.total_snapshots||0;$(\'storage\').textContent=s.storage?.persistent_requested?\'Persistent: ON\':\'Persistent: OFF\';\n const bc=s.bitcoin_context||{},loc=bc.local||{},bb=bc.bitbo||{};\n $(\'ctxRegime\').textContent=bc.regime||\'—\';\n $(\'ctxRegime\').className=\'v \'+(bc.regime===\'SUPPORTIVE\'?\'g\':bc.regime===\'HEADWIND\'?\'r\':\'y\');\n $(\'ctxScore\').textContent=\'Score \'+(Number(bc.score||0)*100).toFixed(0);\n $(\'ctxMayer\').textContent=loc.mayer_multiple==null?\'—\':Number(loc.mayer_multiple).toFixed(3);\n $(\'ctx200w\').textContent=loc.ma200w==null?\'—\':\'$\'+fmt(loc.ma200w);\n $(\'ctx200wDist\').textContent=loc.distance_200w_pct==null?\'—\':pct(loc.distance_200w_pct);\n $(\'ctxBitbo\').textContent=bb.status||\'—\';\n $(\'ctxBitbo\').className=\'v \'+(bb.status===\'OK\'?\'g\':bb.status===\'NO_API_KEY\'?\'y\':\'r\');\n $(\'ctxRemote\').innerHTML=`<td class="ltr">${fmt(bb.realized_price)}</td><td>${bb.mvrv==null?\'—\':Number(bb.mvrv).toFixed(3)}</td><td>${bb.nupl==null?\'—\':Number(bb.nupl).toFixed(3)}</td><td>${bb.sopr==null?\'—\':Number(bb.sopr).toFixed(4)}</td><td>${fmt(bb.etf_7d_avg_btc,1)}</td><td>${fmt(bb.new_supply_7d_avg_btc,1)}</td><td>${fmt(bb.etf_minus_supply_btc,1)}</td>`;\n $(\'contextCompare\').innerHTML=(s.context_compare?.by_regime||[]).map(x=>`<tr><td>${x.regime}</td><td>${x.n}</td><td class="ltr">${pct(x.aligned_1h_avg_pct)}</td><td class="ltr">${pct(x.aligned_4h_avg_pct)}</td></tr>`).join(\'\');\n\n\n const order=[\'SCALP\',\'INTRADAY\',\'SWING\'];\n $(\'lanes\').innerHTML=order.map(k=>{let l=s.lanes?.[k]||{};let why=Object.entries(l.why||{}).map(([x,v])=>`${v?\'✓\':\'×\'} ${x}`).join(\' · \');return `<div class="lane"><div class="row"><div><div class="lab">${k}</div><div class="v ${cls(l.action)}" style="font-size:22px">${l.action||\'—\'}</div></div><div style="text-align:left"><span class="tag">${l.quality||\'—\'} · ${Number(l.quality_score||0).toFixed(0)}</span><br><span class="lab">LONG ${Number(l.long_permission||0).toFixed(0)} / SHORT ${Number(l.short_permission||0).toFixed(0)}</span></div></div><div class="note" style="margin-top:7px">${why}</div>${planBox(l.plan||{})}</div>`}).join(\'\');\n\n $(\'shadow\').innerHTML=(s.shadow_compare?.strategies||[]).map(x=>`<tr><td>${x.strategy}</td><td>${x.trades}</td><td>${x.wins}/${x.losses}</td><td>${Number(x.win_rate).toFixed(1)}%</td><td>${x.profit_factor>=900?\'∞\':Number(x.profit_factor).toFixed(2)}</td><td>${Number(x.avg_r).toFixed(2)}R</td><td>${Math.round(Number(x.avg_delay_sec||0)/60)}m</td><td class="ltr">${pct(x.avg_confirmation_cost_pct)}</td><td>${x.missed_setups}</td></tr>`).join(\'\');\n\n const tfo=[\'1Y\',\'6M\',\'3M\',\'1M\',\'1W\',\'3D\',\'1D\',\'12H\',\'8H\',\'6H\',\'4H\',\'2H\',\'1H\',\'30m\',\'15m\',\'5m\',\'3m\',\'1m\'];\n $(\'tfgrid\').innerHTML=tfo.filter(k=>s.timeframes?.[k]).map(k=>tfCard(k,s.timeframes[k])).join(\'\');\n\n $(\'laneStats\').innerHTML=order.map(k=>{let x=s.lane_paper?.[k]||{};return `<tr><td>${k}</td><td>${x.trades||0}</td><td>${x.open||0}</td><td>${x.wins||0}/${x.losses||0}</td><td>${Number(x.win_rate||0).toFixed(1)}%</td><td>${x.profit_factor>=900?\'∞\':Number(x.profit_factor||0).toFixed(2)}</td><td>${Number(x.avg_r||0).toFixed(2)}R</td></tr>`}).join(\'\');\n\n let warn=[...(s.strong_veto||[]),...(s.warnings||[])];$(\'warnings\').innerHTML=warn.length?warn.map(x=>`<div class="reason">⚠ ${x.replaceAll(\'_\',\' \')}</div>`).join(\'\'):\'<div class="g">✓ لا يوجد تحذير حاليًا</div>\';\n $(\'why\').innerHTML=(s.why_wait||[]).length?(s.why_wait||[]).map(x=>`<div class="reason">• ${x.replaceAll(\'_\',\' \')}</div>`).join(\'\'):\'<div class="g">✓ الإشارة الرئيسية ليست في وضع انتظار لأسباب مسجلة</div>\';\n\n $(\'recentShadow\').innerHTML=(s.shadow_compare?.recent||[]).map(x=>`<tr><td>${x.strategy}</td><td class="${cls(x.side)}">${x.side}</td><td class="ltr">${fmt(x.entry)}</td><td>${x.status}</td><td>${Math.round(Number(x.entry_delay_sec||0)/60)}m</td><td class="ltr">${pct(x.confirmation_cost_pct)}</td><td>${Number(x.result_r||0).toFixed(1)}R</td></tr>`).join(\'\');\n}\nrefresh();setInterval(refresh,30000);\n</script></body></html>'
-
 @app.get("/")
-def home(): return Response(DASHBOARD_HTML,mimetype="text/html; charset=utf-8")
+def home():
+    return send_from_directory(ROOT/"static","dashboard.html")
+
+@app.get("/static/<path:name>")
+def static_file(name):
+    return send_from_directory(ROOT/"static",name)
+
+@app.get("/api/state")
+def state():
+    return jsonify(engine.snapshot())
 
 @app.get("/health")
 def health():
     s=engine.snapshot()
-    return jsonify({"ok":s.get("status")!="ERROR","status":s.get("status"),"error":s.get("error")})
-
-@app.get("/api/state")
-def state(): return jsonify(engine.snapshot())
-
-@app.get("/api/research.csv")
-def research_csv():
-    rows=engine.research.export_rows()
-    if not rows:return Response("no data\n",mimetype="text/csv")
-    buf=io.StringIO();w=csv.DictWriter(buf,fieldnames=list(rows[0].keys()));w.writeheader();w.writerows(rows)
-    return Response(buf.getvalue(),mimetype="text/csv",headers={"Content-Disposition":"attachment; filename=btc_analyzer_research.csv"})
+    return jsonify({
+        "ok":s.get("status") in ("OK","DEGRADED"),
+        "status":s.get("status"),
+        "engine_version":s.get("engine_version"),
+        "last_error":(s.get("health") or {}).get("last_error"),
+        "last_success_age_sec":(s.get("health") or {}).get("last_success_age_sec"),
+    })
 
 @app.get("/diag")
 def diag():
     s=engine.snapshot()
     return jsonify({
-      "app":"BTC Analyzer V1.6",
-      "status":s.get("status"),
-      "error":s.get("error"),
-      "price":s.get("price"),
-      "timeframe_count":len(s.get("timeframes",{})) if isinstance(s,dict) else 0,
-      "data_provider":s.get("data_provider"),
-      "lanes":s.get("lanes"),
-      "shadow_active_setup":(s.get("shadow_compare") or {}).get("active_setup"),
-      "research_snapshots":(s.get("research") or {}).get("total_snapshots"),
-      "bitcoin_context":s.get("bitcoin_context"),
-      "context_compare":s.get("context_compare"),
-      "storage":s.get("storage")
+        "app":"BTC Analyzer V2.0",
+        "status":s.get("status"),
+        "price":s.get("price"),
+        "best_setup":(s.get("decision") or {}).get("best_setup"),
+        "pnl":s.get("pnl"),
+        "health":s.get("health"),
     })
 
 if __name__=="__main__":

@@ -1,32 +1,22 @@
 {
   "symbol": "BTCUSDT",
-  "refresh_seconds": 60,
+  "engine_cycle_seconds": 30,
   "paper_start_balance": 100.0,
   "paper_risk_per_trade_pct": 0.5,
-  "min_quality_to_signal": "A",
-  "signal_cooldown_minutes": 30,
-  "timeframes": [
-    "1Y",
-    "6M",
-    "3M",
-    "1M",
-    "2W",
-    "12D",
-    "1W",
-    "3D",
-    "1D",
-    "12H",
-    "8H",
-    "6H",
-    "4H",
-    "2H",
-    "1H",
-    "30m",
-    "15m",
-    "5m",
-    "3m",
-    "1m"
-  ],
+  "paper_fee_bps_per_side": 0.0,
+  "paper_slippage_bps": 0.0,
+  "paper_max_notional_multiple": 3.0,
+  "report_timezone_offset_hours": 3,
   "research_snapshot_seconds": 300,
-  "bitbo_refresh_seconds": 900
+  "bitbo_refresh_seconds": 900,
+  "lane_cooldowns_seconds": {
+    "SCALP": 600,
+    "INTRADAY": 1800,
+    "SWING": 14400
+  },
+  "lane_expiry_seconds": {
+    "SCALP": 7200,
+    "INTRADAY": 43200,
+    "SWING": 259200
+  }
 }
