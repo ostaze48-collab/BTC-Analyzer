@@ -1,4 +1,4 @@
-# BTC Analyzer V2.4 — Performance Analytics & Experiment History
+# BTC Analyzer V2.5 — Performance Analytics & Experiment History
 
 V2.4 keeps the Quality-First methodology. No new market indicator is added.
 
@@ -131,3 +131,97 @@ Without persistent storage, experiment history cannot survive instance replaceme
 Paper / Research only.
 No real order is sent.
 No metric guarantees future profit.
+
+
+# V2.5 — Lane Comparison Lab
+
+V2.5 adds a fair research comparison between:
+
+- SCALP
+- INTRADAY
+- SWING
+
+## Why the old main-account statistics were not enough
+
+The main account intentionally permits only one open trade globally.
+
+That means if SCALP and INTRADAY are both valid at the same time, the main account
+opens only the stronger setup. The rejected lane then has no trade outcome, so its
+main-account history is censored and cannot be used for a fair strategy comparison.
+
+## Independent lane accounts
+
+V2.5 therefore creates three research-only Paper accounts:
+
+- lane_lab_scalp_v2.db
+- lane_lab_intraday_v2.db
+- lane_lab_swing_v2.db
+
+They all use:
+- the same starting capital,
+- the same risk-per-trade setting,
+- the same fees/slippage settings,
+- the same market data,
+- the same decision rules.
+
+Each account may hold one trade for its own lane. Therefore SCALP, INTRADAY and
+SWING can be tested in parallel without affecting the MAIN account.
+
+Changing Simulation Capital starts a new experiment in all three lane labs as well.
+
+## No duplicate opportunity replay
+
+A single Opportunity ID can open at most one trade per account/experiment.
+
+This prevents a persistent signal from being counted repeatedly as several
+independent trades.
+
+## Lane ranking
+
+The Lane Comparison Lab reports:
+
+- closed trades
+- open trades
+- W/L
+- Win Rate
+- Net P&L
+- Return %
+- Expectancy R
+- Profit Factor
+- Max Drawdown
+- Quality Score
+- Evidence level
+- Reliability %
+
+The Quality Score does NOT rank lanes by dollar profit alone.
+
+It uses mostly scale-free evidence:
+- Expectancy in R
+- Profit Factor
+- Win Rate
+- Drawdown penalty
+
+and is shrunk toward a neutral score of 50 when the sample is small.
+
+Evidence levels:
+- LOW: fewer than 10 closed trades
+- MEDIUM: 10–29 closed trades
+- HIGH: 30+ closed trades
+
+A provisional "Best Observed Lane" is not shown until at least one lane has
+10 closed trades.
+
+This label describes observed Paper performance only. It is not a prediction or
+guarantee of future profit.
+
+## Performance by Market Regime
+
+The lab also separates each lane by market regime.
+
+This can later answer questions such as:
+- Is SCALP strongest during TREND?
+- Does INTRADAY perform better during PULLBACK?
+- Is SWING damaged by RANGE conditions?
+
+V2.5 does not automatically route the MAIN account to the observed winner.
+That should only be considered after enough out-of-sample evidence.

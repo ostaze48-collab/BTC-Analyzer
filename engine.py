@@ -12,9 +12,10 @@ from btc_analyzer.paper import PaperLedger
 from btc_analyzer.research import ResearchJournal, ShadowLab
 from btc_analyzer.regime import MarketRegimeEngine
 from btc_analyzer.opportunity import OpportunityTracker
+from btc_analyzer.lane_lab import LaneComparisonLab
 
 class Engine:
-    VERSION="V2.4"
+    VERSION="V2.5"
 
     def __init__(self,root:Path,cfg:dict):
         self.root=root
@@ -37,6 +38,11 @@ class Engine:
         )
         self.shadow=ShadowLab(self.data_dir/"shadow_v2.db")
         self.opportunities=OpportunityTracker(self.data_dir/"opportunities_v2.db")
+        self.lane_lab=LaneComparisonLab(
+            self.data_dir,
+            cfg,
+            start_balance=self.paper.get_start_balance()
+        )
 
         self.state={"status":"STARTING","engine_version":self.VERSION}
         self.last_good=None
@@ -64,6 +70,7 @@ class Engine:
         # Existing virtual trades are evaluated only against a CLOSED 1m bar.
         # This avoids using the still-forming candle for historical outcomes.
         self.paper.process_closed_bar(closed_bar)
+        self.lane_lab.process_closed_bar(closed_bar)
         self.shadow.process_bar(closed_bar)
 
         analysis=self.analyzer.analyze(frames,futures)
@@ -92,6 +99,10 @@ class Engine:
             decision["lanes"],
             market_regime=market_regime.get("regime")
         )
+        self.lane_lab.observe(
+            decision["lanes"],
+            market_regime=market_regime.get("regime")
+        )
         self.shadow.observe(decision["shadow"])
 
         self.research.update_outcomes(live_price)
@@ -109,6 +120,8 @@ class Engine:
         performance_analytics=self.paper.analytics()
         time_performance=self.paper.time_performance()
         experiments=self.paper.experiment_history()
+        lane_comparison=self.lane_lab.summary(live_price)
+        lane_regime_comparison=self.lane_lab.regime_comparison()
         recent_trades=self.paper.recent()
         research_stats=self.research.stats()
         shadow_stats=self.shadow.stats()
@@ -156,6 +169,8 @@ class Engine:
             "performance_analytics":performance_analytics,
             "time_performance":time_performance,
             "experiments":experiments,
+            "lane_comparison":lane_comparison,
+            "lane_regime_comparison":lane_regime_comparison,
             "recent_trades":recent_trades,
             "active_opportunities":active_opportunities,
             "recent_opportunities":recent_opportunities,

@@ -396,6 +396,16 @@ class PaperLedger:
             if any(plan.get(k) is None for k in ("entry","sl","tp1","tp2")):
                 continue
 
+            opp_id=(s.get("opportunity") or {}).get("opportunity_id")
+            if opp_id and c.execute("""
+              SELECT 1 FROM trades
+              WHERE experiment_id=? AND opportunity_id=?
+              LIMIT 1
+            """,(self.current_experiment_id,opp_id)).fetchone():
+                # One independent opportunity may create at most one trade
+                # in this account/experiment.
+                continue
+
             last=c.execute("""
               SELECT open_ts FROM trades
               WHERE experiment_id=? AND lane=?

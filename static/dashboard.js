@@ -50,7 +50,7 @@ function renderPnl(pnl){
   }).join('');
 }
 
-function renderLane(lane){
+function renderLane(lane,lab){
   const p=lane?.plan||{}, d=lane?.diagnostics||{}, opp=lane?.opportunity||{};
   const why=Object.entries(lane?.why||{}).map(([k,v])=>
     `<span class="${v?'good':'bad'}">${v?'✓':'×'} ${k.replaceAll('_',' ')}</span>`
@@ -91,6 +91,13 @@ function renderLane(lane){
       <div class="plan-item"><span class="label">SL</span><div class="ltr">${num(p.sl)}</div></div>
       <div class="plan-item"><span class="label">TP1</span><div class="ltr">${num(p.tp1)}</div></div>
       <div class="plan-item"><span class="label">TP2</span><div class="ltr">${num(p.tp2)}</div></div>
+    </div>
+
+    <div class="lane-lab-strip">
+      <div class="lane-lab-item"><span class="label">Lab Trades</span><b>${lab?.closed_trades||0}</b></div>
+      <div class="lane-lab-item"><span class="label">Lab Return</span><b class="${(lab?.return_pct||0)>0?'good':(lab?.return_pct||0)<0?'bad':'neutral'}">${pct(lab?.return_pct||0)}</b></div>
+      <div class="lane-lab-item"><span class="label">Expectancy</span><b class="${(lab?.expectancy_r||0)>0?'good':(lab?.expectancy_r||0)<0?'bad':'neutral'}">${num(lab?.expectancy_r||0,2)}R</b></div>
+      <div class="lane-lab-item"><span class="label">Quality / Evidence</span><b>${num(lab?.quality_score||50,1)} · ${lab?.evidence||'LOW'}</b></div>
     </div>
   </article>`;
 }
@@ -339,6 +346,50 @@ function renderExperimentHistory(rows){
   </tr>`).join('');
 }
 
+function renderLaneComparison(lab){
+  const lanes=lab?.lanes||{};
+  const ranking=lab?.ranking||['SCALP','INTRADAY','SWING'];
+
+  $('laneComparison').innerHTML=ranking.map((lane,i)=>{
+    const x=lanes[lane]||{};
+    return `<tr class="${i===0?'rank-1':''}">
+      <td>#${i+1}</td><td>${lane}</td><td>${x.closed_trades||0}</td><td>${x.open_trades||0}</td>
+      <td>${x.wins||0}/${x.losses||0}</td><td>${num(x.win_rate||0,1)}%</td>
+      <td class="${(x.net_pnl||0)>0?'good':(x.net_pnl||0)<0?'bad':'neutral'}">${money(x.net_pnl||0)}</td>
+      <td class="${(x.return_pct||0)>0?'good':(x.return_pct||0)<0?'bad':'neutral'}">${pct(x.return_pct||0)}</td>
+      <td class="${(x.expectancy_r||0)>0?'good':(x.expectancy_r||0)<0?'bad':'neutral'}">${num(x.expectancy_r||0,2)}R</td>
+      <td>${x.profit_factor>=900?'∞':num(x.profit_factor||0,2)}</td>
+      <td class="${(x.max_drawdown_pct||0)>0?'bad':'neutral'}">${pct(-(x.max_drawdown_pct||0))}</td>
+      <td>${num(x.quality_score||50,1)}</td>
+      <td class="evidence-${x.evidence||'LOW'}">${x.evidence||'LOW'}</td>
+      <td>${num(x.reliability_pct||0,0)}%</td>
+    </tr>`;
+  }).join('');
+
+  if(lab?.best_observed_lane){
+    const x=lanes[lab.best_observed_lane]||{};
+    $('laneLeader').innerHTML=
+      `أفضل مسار مرصود حاليًا: <b class="good">${lab.best_observed_lane}</b> · `+
+      `Quality ${num(x.quality_score,1)} · Expectancy ${num(x.expectancy_r,2)}R · `+
+      `PF ${x.profit_factor>=900?'∞':num(x.profit_factor,2)} · `+
+      `${x.closed_trades} صفقة مغلقة · Evidence ${x.evidence}.`;
+  }else{
+    $('laneLeader').innerHTML=
+      `لا يوجد Leader موثوق بعد. نحتاج على الأقل ${lab?.minimum_for_provisional_leader||10} `+
+      `صفقات مغلقة لمسار واحد لإظهار Leader أولي، و${lab?.target_for_high_evidence||30} لثقة بحثية أعلى.`;
+  }
+}
+
+function renderLaneRegimeComparison(rows){
+  $('laneRegimeComparison').innerHTML=(rows||[]).map(x=>`<tr>
+    <td>${x.regime||'UNKNOWN'}</td><td>${x.lane}</td><td>${x.trades||0}</td>
+    <td>${x.wins||0}/${x.losses||0}</td><td>${num(x.win_rate||0,1)}%</td>
+    <td class="${(x.net_pnl||0)>0?'good':(x.net_pnl||0)<0?'bad':'neutral'}">${money(x.net_pnl||0)}</td>
+    <td>${num(x.avg_r||0,2)}R</td><td>${num(x.avg_mfe_r||0,2)}R</td>
+    <td>${num(x.avg_mae_r||0,2)}R</td><td>${num(x.capture_efficiency||0,1)}%</td>
+  </tr>`).join('');
+}
+
 function renderHealth(h,status){
   const items=[
     ['Engine',h?.engine_version||'—'],['Status',status||'—'],
@@ -391,7 +442,7 @@ async function refresh(){
     renderPnl(s.pnl);
     renderOpenTrades(s.open_positions,s.unrealized);
     renderRiskGuard(s.risk_guard);
-    $('lanes').innerHTML=['SCALP','INTRADAY','SWING'].map(k=>renderLane(s.decision?.lanes?.[k])).join('');
+    $('lanes').innerHTML=['SCALP','INTRADAY','SWING'].map(k=>renderLane(s.decision?.lanes?.[k],s.lane_comparison?.lanes?.[k])).join('');
     renderContext(s.bitcoin_context);
     renderRecentTrades(s.recent_trades);
     renderTimeframes(s.analysis);
@@ -408,6 +459,8 @@ async function refresh(){
     $('weekdayPerformance').innerHTML=performanceRows(s.time_performance?.weekday);
     $('timePerfTz').textContent='Entry time · '+(s.time_performance?.timezone||'—');
     renderExperimentHistory(s.experiments);
+    renderLaneComparison(s.lane_comparison);
+    renderLaneRegimeComparison(s.lane_regime_comparison);
     renderHealth(s.health,status);
   }catch(e){
     $('statusBadge').textContent='UI ERROR';

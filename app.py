@@ -41,6 +41,7 @@ def set_paper_capital():
     try:
         amount=float(payload.get("amount"))
         result=engine.paper.set_start_balance(amount,reset_results=True)
+        lane_lab_result=engine.lane_lab.reset_capital(amount)
 
         # Refresh only paper-account fields immediately. Research/Shadow stay intact.
         with engine.lock:
@@ -57,11 +58,17 @@ def set_paper_capital():
                 engine.state["performance_analytics"]=engine.paper.analytics()
                 engine.state["time_performance"]=engine.paper.time_performance()
                 engine.state["experiments"]=engine.paper.experiment_history()
+                engine.state["lane_comparison"]=engine.lane_lab.summary(
+                    engine.state.get("price")
+                )
+                engine.state["lane_regime_comparison"]=engine.lane_lab.regime_comparison()
                 engine.state["risk_guard"]=engine.paper.risk_guard()
 
         return jsonify({
             "ok":True,
             "message":"New paper experiment started with the selected capital.",
+            "lane_lab_reset":True,
+            "lane_lab":lane_lab_result,
             **result
         })
     except Exception as e:
@@ -91,7 +98,7 @@ def paper_trades_csv():
 def diag():
     s=engine.snapshot()
     return jsonify({
-        "app":"BTC Analyzer V2.4",
+        "app":"BTC Analyzer V2.5",
         "status":s.get("status"),
         "price":s.get("price"),
         "best_setup":(s.get("decision") or {}).get("best_setup"),
