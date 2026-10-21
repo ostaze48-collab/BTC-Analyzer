@@ -51,7 +51,7 @@ function renderPnl(pnl){
 }
 
 function renderLane(lane,lab){
-  const p=lane?.plan||{}, d=lane?.diagnostics||{}, opp=lane?.opportunity||{};
+  const p=lane?.plan||{}, d=lane?.diagnostics||{}, opp=lane?.opportunity||{}, pa=lane?.price_action||{};
   const why=Object.entries(lane?.why||{}).map(([k,v])=>
     `<span class="${v?'good':'bad'}">${v?'✓':'×'} ${k.replaceAll('_',' ')}</span>`
   ).join('<br>');
@@ -83,6 +83,13 @@ function renderLane(lane,lab){
       <div class="diag"><span class="label">Chasing Risk</span><b class="${clsDirection(d.chasing_risk)}">${d.chasing_risk||'—'}</b></div>
       <div class="diag"><span class="label">Available R:R</span><b>${num(d.available_rr,2)}R</b></div>
       <div class="diag"><span class="label">R:R Gate</span><b class="${d.rr_gate_pass?'good':'bad'}">${d.rr_gate_pass?'PASS':'BLOCK'}</b></div>
+      <div class="diag"><span class="label">Price Action</span><b class="${pa.state==='ALIGNED'?'good':pa.state==='OPPOSED'?'bad':'warn'}">${pa.state||'NEUTRAL'}</b></div>
+      <div class="diag"><span class="label">PA Match Score</span><b class="${(pa.score||0)>.18?'good':(pa.score||0)<-.18?'bad':'warn'}">${num((pa.score||0)*100,0)}</b></div>
+    </div>
+
+    <div class="pa-evidence">
+      <div><span class="label">PA aligned:</span> ${(pa.aligned_evidence||[]).slice(0,5).join(' · ')||'—'}</div>
+      <div><span class="label">PA opposed:</span> ${(pa.opposed_evidence||[]).slice(0,5).join(' · ')||'—'}</div>
     </div>
 
     <div class="reason-list">${why||'—'}</div>
@@ -180,6 +187,7 @@ function renderResearch(r){
 function renderRecentTrades(rows){
   $('recentTrades').innerHTML=(rows||[]).map(x=>`<tr>
     <td><code>${shortId(x.opportunity_id)}</code></td><td>${x.lane}</td><td>${x.market_regime||'—'}</td>
+    <td class="${x.price_action_state==='ALIGNED'?'good':x.price_action_state==='OPPOSED'?'bad':'warn'}">${x.price_action_state||'—'}</td>
     <td class="${clsDirection(x.side)}">${x.side}</td><td>${x.setup_grade||'—'}</td>
     <td class="${clsDirection(x.entry_timing)}">${x.entry_timing||'—'}</td>
     <td class="${clsDirection(x.chasing_risk)}">${x.chasing_risk||'—'}</td>
@@ -390,6 +398,77 @@ function renderLaneRegimeComparison(rows){
   </tr>`).join('');
 }
 
+function paPrice(v){
+  return v==null ? '—' : Number(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+
+function renderPriceAction(pa){
+  const P=pa?.timeframes||{};
+  const order=['1W','3D','1D','12H','8H','6H','4H','2H','1H','30m','15m','5m','3m','1m'];
+
+  $('paSummary').textContent=(pa?.summary_state||'NEUTRAL')+' · '+num((pa?.summary_score||0)*100,0);
+  $('paSummary').className='big-stat '+(
+    pa?.summary_state==='BULLISH'?'good':pa?.summary_state==='BEARISH'?'bad':'warn'
+  );
+
+  $('paTfTable').innerHTML=order.filter(tf=>P[tf]).map(tf=>{
+    const x=P[tf]||{};
+    const z=x.zones||{}, s=z.nearest_support, r=z.nearest_resistance;
+    const tl=x.trendlines||{};
+    const candle=x.candles?.primary;
+    const pattern=x.chart_patterns?.primary;
+
+    let trend='—';
+    if(tl.support_line?.valid_direction && tl.support_line?.r2>=.55){
+      trend='UP TL '+num(tl.support_line.slope_pct_per_bar,3)+'%/bar';
+    }
+    if(tl.resistance_line?.valid_direction && tl.resistance_line?.r2>=.55){
+      trend=(trend==='—'?'':trend+' · ')+'DOWN TL '+num(tl.resistance_line.slope_pct_per_bar,3)+'%/bar';
+    }
+    if(tl.channel && tl.channel!=='NONE'){
+      trend=(trend==='—'?'':trend+' · ')+tl.channel;
+    }
+    if(tl.breakout && tl.breakout!=='NONE'){
+      trend=(trend==='—'?'':trend+' · ')+tl.breakout+(tl.retest?' + RETEST':'');
+    }
+
+    return `<tr>
+      <td>${tf}</td>
+      <td class="${x.state==='BULLISH'?'good':x.state==='BEARISH'?'bad':'warn'}">${x.state||'—'}</td>
+      <td>${num((x.directional_score||0)*100,0)}</td>
+      <td class="ltr">${s?paPrice(s.center):'—'}${s?` (${pct(-s.distance_pct)})`:''}</td>
+      <td>${s?num(s.strength,0)+' · '+s.freshness+(s.role_flip?' · FLIP':''):'—'}</td>
+      <td class="ltr">${r?paPrice(r.center):'—'}${r?` (${pct(r.distance_pct)})`:''}</td>
+      <td>${r?num(r.strength,0)+' · '+r.freshness+(r.role_flip?' · FLIP':''):'—'}</td>
+      <td>${trend}</td>
+      <td class="${candle?.direction==='BULLISH'?'good':candle?.direction==='BEARISH'?'bad':'neutral'}">${candle?.name||'—'}</td>
+      <td class="${pattern?.direction==='BULLISH'?'good':pattern?.direction==='BEARISH'?'bad':'neutral'}">${pattern?.name||'—'}</td>
+      <td class="good">${(x.bullish_evidence||[]).slice(0,4).join(', ')||'—'}</td>
+      <td class="bad">${(x.bearish_evidence||[]).slice(0,4).join(', ')||'—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderPaPerformance(rows){
+  $('paPerformance').innerHTML=(rows||[]).map(x=>`<tr>
+    <td class="${x.label==='ALIGNED'?'good':x.label==='OPPOSED'?'bad':'warn'}">${x.label}</td>
+    <td>${x.trades}</td><td>${x.wins}/${x.losses}</td><td>${num(x.win_rate,1)}%</td>
+    <td class="${x.net_pnl>0?'good':x.net_pnl<0?'bad':'neutral'}">${money(x.net_pnl)}</td>
+    <td>${num(x.avg_r,2)}R</td><td>${num(x.avg_mfe_r,2)}R</td><td>${num(x.avg_mae_r,2)}R</td>
+    <td>${num(x.capture_efficiency,1)}%</td>
+  </tr>`).join('');
+}
+
+function renderLanePaPerformance(rows){
+  $('lanePaPerformance').innerHTML=(rows||[]).map(x=>`<tr>
+    <td>${x.lane}</td>
+    <td class="${x.label==='ALIGNED'?'good':x.label==='OPPOSED'?'bad':'warn'}">${x.label}</td>
+    <td>${x.trades}</td><td>${x.wins}/${x.losses}</td><td>${num(x.win_rate,1)}%</td>
+    <td class="${x.net_pnl>0?'good':x.net_pnl<0?'bad':'neutral'}">${money(x.net_pnl)}</td>
+    <td>${num(x.avg_r,2)}R</td>
+  </tr>`).join('');
+}
+
 function renderHealth(h,status){
   const items=[
     ['Engine',h?.engine_version||'—'],['Status',status||'—'],
@@ -446,6 +525,9 @@ async function refresh(){
     renderContext(s.bitcoin_context);
     renderRecentTrades(s.recent_trades);
     renderTimeframes(s.analysis);
+    renderPriceAction(s.analysis?.price_action);
+    renderPaPerformance(s.price_action_performance);
+    renderLanePaPerformance(s.lane_price_action_comparison);
     renderShadow(s.shadow_compare);
     renderLaneStats(s.lane_stats);
     renderResearch(s.research);

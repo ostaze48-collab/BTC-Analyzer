@@ -90,3 +90,6 @@ pre{white-space:pre-wrap;color:var(--muted);font-size:11px}
 .evidence-MEDIUM{color:var(--yellow)}
 .evidence-HIGH{color:var(--green)}
 @media(max-width:650px){.lane-lab-strip{grid-template-columns:repeat(2,1fr)}}
+
+.pa-evidence{margin-top:8px;background:#07131e;border:1px solid var(--line);border-radius:8px;padding:7px;font-size:10px;line-height:1.7}
+.pa-evidence .label{display:inline-block;min-width:78px}

@@ -55,6 +55,7 @@ def set_paper_capital():
                 engine.state["lane_stats"]=engine.paper.lane_stats()
                 engine.state["regime_performance"]=engine.paper.regime_stats()
                 engine.state["calibration_stats"]=engine.paper.calibration_stats()
+                engine.state["price_action_performance"]=engine.paper.price_action_stats()
                 engine.state["performance_analytics"]=engine.paper.analytics()
                 engine.state["time_performance"]=engine.paper.time_performance()
                 engine.state["experiments"]=engine.paper.experiment_history()
@@ -62,6 +63,7 @@ def set_paper_capital():
                     engine.state.get("price")
                 )
                 engine.state["lane_regime_comparison"]=engine.lane_lab.regime_comparison()
+                engine.state["lane_price_action_comparison"]=engine.lane_lab.price_action_comparison()
                 engine.state["risk_guard"]=engine.paper.risk_guard()
 
         return jsonify({
@@ -98,7 +100,7 @@ def paper_trades_csv():
 def diag():
     s=engine.snapshot()
     return jsonify({
-        "app":"BTC Analyzer V2.5",
+        "app":"BTC Analyzer V2.6",
         "status":s.get("status"),
         "price":s.get("price"),
         "best_setup":(s.get("decision") or {}).get("best_setup"),

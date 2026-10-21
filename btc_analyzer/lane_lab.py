@@ -185,6 +185,15 @@ class LaneComparisonLab:
                 out.append(row)
         return sorted(out,key=lambda x:(x.get("regime") or "",x["lane"]))
 
+    def price_action_comparison(self):
+        out=[]
+        for lane,ledger in self.ledgers.items():
+            for row in ledger.price_action_stats():
+                x=dict(row)
+                x["lane"]=lane
+                out.append(x)
+        return sorted(out,key=lambda x:(x.get("label") or "",x["lane"]))
+
     def histories(self):
         return {
             lane:ledger.experiment_history()

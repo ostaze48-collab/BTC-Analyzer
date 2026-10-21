@@ -13,9 +13,10 @@ from btc_analyzer.research import ResearchJournal, ShadowLab
 from btc_analyzer.regime import MarketRegimeEngine
 from btc_analyzer.opportunity import OpportunityTracker
 from btc_analyzer.lane_lab import LaneComparisonLab
+from btc_analyzer.price_action import PriceActionEngine
 
 class Engine:
-    VERSION="V2.5"
+    VERSION="V2.6"
 
     def __init__(self,root:Path,cfg:dict):
         self.root=root
@@ -31,6 +32,7 @@ class Engine:
         )
         self.decision=DecisionEngine()
         self.regime=MarketRegimeEngine()
+        self.price_action=PriceActionEngine()
         self.paper=PaperLedger(self.data_dir/"paper_v2.db",cfg)
         self.research=ResearchJournal(
             self.data_dir/"research_v2.db",
@@ -74,6 +76,8 @@ class Engine:
         self.shadow.process_bar(closed_bar)
 
         analysis=self.analyzer.analyze(frames,futures)
+        price_action=self.price_action.analyze(frames)
+        analysis["price_action"]=price_action
         market_regime=self.regime.evaluate(analysis)
 
         try:
@@ -117,11 +121,13 @@ class Engine:
         lane_stats=self.paper.lane_stats()
         regime_performance=self.paper.regime_stats()
         calibration_stats=self.paper.calibration_stats()
+        price_action_performance=self.paper.price_action_stats()
         performance_analytics=self.paper.analytics()
         time_performance=self.paper.time_performance()
         experiments=self.paper.experiment_history()
         lane_comparison=self.lane_lab.summary(live_price)
         lane_regime_comparison=self.lane_lab.regime_comparison()
+        lane_price_action_comparison=self.lane_lab.price_action_comparison()
         recent_trades=self.paper.recent()
         research_stats=self.research.stats()
         shadow_stats=self.shadow.stats()
@@ -148,6 +154,8 @@ class Engine:
             "live_price_separate":True,
             "custom_bars_closed_only":True,
             "regime_research_only":True,
+            "price_action_closed_candles_only":True,
+            "price_action_standalone_trigger":False,
         }
 
         st={
@@ -166,11 +174,13 @@ class Engine:
             "lane_stats":lane_stats,
             "regime_performance":regime_performance,
             "calibration_stats":calibration_stats,
+            "price_action_performance":price_action_performance,
             "performance_analytics":performance_analytics,
             "time_performance":time_performance,
             "experiments":experiments,
             "lane_comparison":lane_comparison,
             "lane_regime_comparison":lane_regime_comparison,
+            "lane_price_action_comparison":lane_price_action_comparison,
             "recent_trades":recent_trades,
             "active_opportunities":active_opportunities,
             "recent_opportunities":recent_opportunities,

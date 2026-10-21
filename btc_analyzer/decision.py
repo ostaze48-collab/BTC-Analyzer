@@ -1,8 +1,15 @@
 from __future__ import annotations
 from .core import clamp, safe
 
+
 class DecisionEngine:
     MIN_RR={"SCALP":1.20,"INTRADAY":1.40,"SWING":1.60}
+
+    CANDLE_NAMES={
+        "DOJI","HAMMER","SHOOTING_STAR","BULLISH_ENGULFING",
+        "BEARISH_ENGULFING","INSIDE_BAR","MORNING_STAR","EVENING_STAR",
+        "BULLISH_OUTSIDE_BAR","BEARISH_OUTSIDE_BAR"
+    }
 
     def _dir_value(self,a):
         if not a:
@@ -68,13 +75,103 @@ class DecisionEngine:
             sl=price+dist; tp1=price-dist*r1; tp2=price-dist*r2
         return {"entry":price,"sl":sl,"tp1":tp1,"tp2":tp2,"risk_pct":dist/price*100}
 
-    def _diagnostics(self,plan,a,d,lane,triggered):
+    @staticmethod
+    def _pa_family(name):
+        if "ZONE" in name or "SUPPORT" in name or "RESISTANCE" in name:
+            return "ZONE"
+        if "TRENDLINE" in name:
+            return "TRENDLINE"
+        if name in DecisionEngine.CANDLE_NAMES:
+            return "CANDLE"
+        return "CHART_PATTERN"
+
+    def _pa_match(self,analysis,tfs,weights,d):
+        pa=(analysis.get("price_action") or {}).get("timeframes",{})
+        if not d:
+            return {
+                "score":0.0,"state":"NEUTRAL","aligned_evidence":[],
+                "opposed_evidence":[],"aligned_families":[],
+                "opposed_families":[],"strong_opposition":False,
+                "frames_used":[]
+            }
+
+        vals=[]; ws=[]
+        aligned=[]; opposed=[]
+        aligned_families=set(); opposed_families=set()
+        frames_used=[]
+
+        for tf,w in zip(tfs,weights):
+            x=pa.get(tf)
+            if not x or x.get("state")=="ERROR":
+                continue
+            frames_used.append(tf)
+            ds=safe(x.get("directional_score"))*d
+            vals.append(ds*w); ws.append(w)
+
+            good=x.get("bullish_evidence",[]) if d>0 else x.get("bearish_evidence",[])
+            bad=x.get("bearish_evidence",[]) if d>0 else x.get("bullish_evidence",[])
+
+            for name in good[:4]:
+                label=f"{tf}:{name}"
+                if label not in aligned:
+                    aligned.append(label)
+                aligned_families.add(self._pa_family(name))
+            for name in bad[:4]:
+                label=f"{tf}:{name}"
+                if label not in opposed:
+                    opposed.append(label)
+                opposed_families.add(self._pa_family(name))
+
+        score=clamp(sum(vals)/sum(ws)) if ws else 0.0
+        state="ALIGNED" if score>=.18 else "OPPOSED" if score<=-.18 else "NEUTRAL"
+
+        # A hard veto needs both substantial directional opposition and
+        # at least two independent price-action families. A single candle
+        # pattern cannot block a trade by itself.
+        strong_opposition=bool(
+            score<=-.45 and len(opposed_families)>=2 and len(opposed)>=2
+        )
+
+        return {
+            "score":score,
+            "state":state,
+            "aligned_evidence":aligned[:8],
+            "opposed_evidence":opposed[:8],
+            "aligned_families":sorted(aligned_families),
+            "opposed_families":sorted(opposed_families),
+            "strong_opposition":strong_opposition,
+            "frames_used":frames_used,
+        }
+
+    @staticmethod
+    def _nearest_zone_obstacle(pa_tf,d,entry):
+        if not pa_tf or not entry:
+            return None
+        z=pa_tf.get("zones") or {}
+        if d>0:
+            r=z.get("nearest_resistance")
+            if (
+                r and safe(r.get("center"))>entry and
+                safe(r.get("strength"))>=55
+            ):
+                return safe(r.get("center"))
+        else:
+            s=z.get("nearest_support")
+            if (
+                s and 0<safe(s.get("center"))<entry and
+                safe(s.get("strength"))>=55
+            ):
+                return safe(s.get("center"))
+        return None
+
+    def _diagnostics(self,plan,a,d,lane,triggered,pa_tf=None,pa_match=None):
         entry=plan.get("entry"); sl=plan.get("sl"); tp2=plan.get("tp2")
         if any(x is None for x in (entry,sl,tp2)) or not a or not d:
             return {
                 "entry_timing":"UNKNOWN","chasing_risk":"UNKNOWN",
                 "available_rr":0.0,"rr_gate_pass":False,
-                "structural_obstacle":None
+                "structural_obstacle":None,"price_action_state":"NEUTRAL",
+                "price_action_score":0.0
             }
 
         entry=float(entry); sl=float(sl); tp2=float(tp2)
@@ -90,6 +187,12 @@ class DecisionEngine:
             s=a.get("support")
             if s is not None and float(s)<entry:
                 obstacle=float(s)
+
+        # V2.6: use the richer S/R zone as an additional structural obstacle.
+        pa_obstacle=self._nearest_zone_obstacle(pa_tf,d,entry)
+        if pa_obstacle is not None:
+            if obstacle is None or abs(pa_obstacle-entry)<abs(obstacle-entry):
+                obstacle=pa_obstacle
 
         available_reward=planned_reward
         if obstacle is not None:
@@ -113,16 +216,20 @@ class DecisionEngine:
         else:
             timing="ACCEPTABLE"
 
+        pa_match=pa_match or {}
         return {
             "entry_timing":timing,
             "chasing_risk":chasing,
             "available_rr":rr,
             "rr_gate_pass":bool(rr>=self.MIN_RR[lane]),
             "structural_obstacle":obstacle,
+            "price_action_state":pa_match.get("state","NEUTRAL"),
+            "price_action_score":safe(pa_match.get("score")),
         }
 
     def evaluate(self,analysis,context,live_price):
         T=analysis.get("timeframes",{})
+        PA=(analysis.get("price_action") or {}).get("timeframes",{})
         global_d=1 if analysis.get("bias")=="BULLISH" else -1 if analysis.get("bias")=="BEARISH" else 0
 
         scalp_ctx=self._context(T,["4H","1H","30m","15m"],[.30,.30,.20,.20])
@@ -138,6 +245,18 @@ class DecisionEngine:
 
         t1,t3,t5=T.get("1m"),T.get("3m"),T.get("5m")
         t15,t30,t1h,t4h,t1d=T.get("15m"),T.get("30m"),T.get("1H"),T.get("4H"),T.get("1D")
+
+        # Price Action matching. It can reinforce or veto; it never creates
+        # a trigger if the original trend/structure/wave trigger is absent.
+        pa_scalp=self._pa_match(
+            analysis,["15m","5m","3m","1m"],[.20,.40,.25,.15],ds
+        )
+        pa_intra=self._pa_match(
+            analysis,["1H","30m","15m"],[.25,.40,.35],di
+        )
+        pa_swing=self._pa_match(
+            analysis,["1D","4H"],[.45,.55],dw
+        )
 
         a1=self._aligned(t1,ds,.08) if ds else False
         a3=self._aligned(t3,ds,.10) if ds else False
@@ -165,16 +284,20 @@ class DecisionEngine:
         scalp_trigger=variants["D_5M_1M"]
         scalp_score=max(0,min(100,
             abs(scalp_ctx)*55+(18 if a5 else 0)+(12 if a1 else 0)+(8 if a3 else 0)+(7 if a15 else 0)
+            + pa_scalp["score"]*8
         ))
         scalp_grade=self._grade(scalp_score)
-        # A+ now requires stronger convergence. A trade may still be allowed at A.
-        if not a15 or not a3:
+        if not a15 or not a3 or pa_scalp["state"]=="OPPOSED":
             scalp_grade=self._cap_grade(scalp_grade,"A")
         scalp_plan=self._plan(live_price,t5,ds,"SCALP")
-        scalp_diag=self._diagnostics(scalp_plan,t5,ds,"SCALP",scalp_trigger)
+        scalp_diag=self._diagnostics(
+            scalp_plan,t5,ds,"SCALP",scalp_trigger,
+            PA.get("5m"),pa_scalp
+        )
         scalp_action=("LONG" if ds>0 else "SHORT") if (
             scalp_trigger and scalp_grade in ("A","A+") and
-            scalp_diag["rr_gate_pass"] and scalp_diag["chasing_risk"]!="HIGH"
+            scalp_diag["rr_gate_pass"] and scalp_diag["chasing_risk"]!="HIGH" and
+            not pa_scalp["strong_opposition"]
         ) else "WAIT"
 
         ia15=self._aligned(t15,di,.12) if di else False
@@ -182,44 +305,60 @@ class DecisionEngine:
         ia1h=self._aligned(t1h,di,.10) if di else False
         intra_permission=bool(di and abs(intra_ctx)>=.25 and self._not_strongly_opposed(t4h,di))
         intra_trigger=bool(intra_permission and ia30 and ia15)
-        intra_score=max(0,min(100,abs(intra_ctx)*60+(15 if ia1h else 0)+(15 if ia30 else 0)+(10 if ia15 else 0)))
+        intra_score=max(0,min(100,
+            abs(intra_ctx)*60+(15 if ia1h else 0)+(15 if ia30 else 0)+(10 if ia15 else 0)
+            + pa_intra["score"]*8
+        ))
         intra_grade=self._grade(intra_score)
-        if not ia1h:
+        if not ia1h or pa_intra["state"]=="OPPOSED":
             intra_grade=self._cap_grade(intra_grade,"A")
         intra_plan=self._plan(live_price,t15,di,"INTRADAY")
-        intra_diag=self._diagnostics(intra_plan,t15,di,"INTRADAY",intra_trigger)
+        intra_diag=self._diagnostics(
+            intra_plan,t15,di,"INTRADAY",intra_trigger,
+            PA.get("15m"),pa_intra
+        )
         intra_action=("LONG" if di>0 else "SHORT") if (
             intra_trigger and intra_grade in ("A","A+") and
-            intra_diag["rr_gate_pass"] and intra_diag["chasing_risk"]!="HIGH"
+            intra_diag["rr_gate_pass"] and intra_diag["chasing_risk"]!="HIGH" and
+            not pa_intra["strong_opposition"]
         ) else "WAIT"
 
         wa1d=self._aligned(t1d,dw,.10) if dw else False
         wa4h=self._aligned(t4h,dw,.12) if dw else False
         swing_permission=bool(dw and abs(swing_ctx)>=.25)
         swing_trigger=bool(swing_permission and wa1d and wa4h)
-        swing_score=max(0,min(100,abs(swing_ctx)*68+(17 if wa1d else 0)+(15 if wa4h else 0)))
+        swing_score=max(0,min(100,
+            abs(swing_ctx)*68+(17 if wa1d else 0)+(15 if wa4h else 0)
+            + pa_swing["score"]*8
+        ))
         swing_grade=self._grade(swing_score)
+        if pa_swing["state"]=="OPPOSED":
+            swing_grade=self._cap_grade(swing_grade,"A")
         swing_plan=self._plan(live_price,t4h,dw,"SWING")
-        swing_diag=self._diagnostics(swing_plan,t4h,dw,"SWING",swing_trigger)
+        swing_diag=self._diagnostics(
+            swing_plan,t4h,dw,"SWING",swing_trigger,
+            PA.get("4H"),pa_swing
+        )
         swing_action=("LONG" if dw>0 else "SHORT") if (
             swing_trigger and swing_grade in ("A","A+") and
-            swing_diag["rr_gate_pass"] and swing_diag["chasing_risk"]!="HIGH"
+            swing_diag["rr_gate_pass"] and swing_diag["chasing_risk"]!="HIGH" and
+            not pa_swing["strong_opposition"]
         ) else "WAIT"
 
-        def lane(name,d,ctx,action,grade,score,trigger,plan,diag,why):
+        def lane(name,d,ctx,action,grade,score,trigger,plan,diag,why,pa):
             tilt=context_score*15
             long_score=max(0,min(100,50+ctx*50+tilt))
             short_score=max(0,min(100,50-ctx*50-tilt))
             why=dict(why)
             why["rr_gate"]=bool(diag["rr_gate_pass"])
             why["not_chasing"]=diag["chasing_risk"]!="HIGH"
+            why["price_action_veto_clear"]=not pa.get("strong_opposition",False)
             return {
                 "lane":name,
                 "side_bias":"LONG" if d>0 else "SHORT" if d<0 else "NEUTRAL",
                 "context_score":ctx,
                 "long_direction_score":long_score,
                 "short_direction_score":short_score,
-                # Backward-compatible aliases for old dashboard/database readers.
                 "long_permission":long_score,
                 "short_permission":short_score,
                 "triggered":bool(trigger),
@@ -229,18 +368,30 @@ class DecisionEngine:
                 "why":why,
                 "plan":plan,
                 "diagnostics":diag,
+                "price_action":pa,
             }
 
         lanes={
-            "SCALP":lane("SCALP",ds,scalp_ctx,scalp_action,scalp_grade,scalp_score,scalp_trigger,scalp_plan,scalp_diag,{
-                "higher_tf_permission":scalp_permission,"15m_support":a15,"5m_setup":a5,"3m_confirm":a3,"1m_execution":a1
-            }),
-            "INTRADAY":lane("INTRADAY",di,intra_ctx,intra_action,intra_grade,intra_score,intra_trigger,intra_plan,intra_diag,{
-                "1h_support":ia1h,"30m_setup":ia30,"15m_trigger":ia15
-            }),
-            "SWING":lane("SWING",dw,swing_ctx,swing_action,swing_grade,swing_score,swing_trigger,swing_plan,swing_diag,{
-                "1d_support":wa1d,"4h_trigger":wa4h
-            }),
+            "SCALP":lane(
+                "SCALP",ds,scalp_ctx,scalp_action,scalp_grade,scalp_score,
+                scalp_trigger,scalp_plan,scalp_diag,{
+                    "higher_tf_permission":scalp_permission,
+                    "15m_support":a15,"5m_setup":a5,
+                    "3m_confirm":a3,"1m_execution":a1
+                },pa_scalp
+            ),
+            "INTRADAY":lane(
+                "INTRADAY",di,intra_ctx,intra_action,intra_grade,intra_score,
+                intra_trigger,intra_plan,intra_diag,{
+                    "1h_support":ia1h,"30m_setup":ia30,"15m_trigger":ia15
+                },pa_intra
+            ),
+            "SWING":lane(
+                "SWING",dw,swing_ctx,swing_action,swing_grade,swing_score,
+                swing_trigger,swing_plan,swing_diag,{
+                    "1d_support":wa1d,"4h_trigger":wa4h
+                },pa_swing
+            ),
         }
 
         actionable=[x for x in lanes.values() if x["action"] in ("LONG","SHORT")]

@@ -1,6 +1,6 @@
-# BTC Analyzer V2.5 — Performance Analytics & Experiment History
+# BTC Analyzer V2.6 — Performance Analytics & Experiment History
 
-V2.4 keeps the Quality-First methodology. No new market indicator is added.
+V2.6 keeps the Quality-First methodology. No new market indicator is added.
 
 This release focuses on understanding whether the existing system is actually
 performing well and on making capital experiments comparable.
@@ -49,7 +49,7 @@ RESET with zero P&L rather than being incorrectly classified as a market win/los
 
 ## Performance tab
 
-V2.4 adds a dedicated Performance tab.
+V2.4 introduced the dedicated Performance tab; V2.6 retains it and adds a separate Price Action tab.
 
 ### Equity Curve
 Built only from realized main-account trades.
@@ -225,3 +225,146 @@ This can later answer questions such as:
 
 V2.5 does not automatically route the MAIN account to the observed winner.
 That should only be considered after enough out-of-sample evidence.
+
+
+# V2.6 — Price Action Engine
+
+V2.6 adds price-action analysis without adding a new technical indicator.
+
+## Support / Resistance Zones 2.0
+
+Closed-candle pivots are clustered into zones instead of treating every pivot as
+a perfect single-price line.
+
+Each zone records:
+- center / upper / lower bound
+- distance from current price
+- touch count
+- strength score
+- freshness: FRESH / TESTED / WEAKENED
+- role flip when both pivot-high and pivot-low evidence exist
+- recent break/retest approximation
+
+Only sufficiently strong nearby zones are allowed to constrain the trade's
+Available R:R.
+
+## Trendlines & Channels
+
+Swing lows and highs are fitted geometrically.
+
+The engine records:
+- projected line price
+- slope and slope % per bar
+- R² fit quality
+- touches
+- distance from price
+- trendline break
+- retest approximation
+- channel candidate
+
+This is computed from closed candles only.
+
+## Candlestick patterns
+
+V2.6 detects candidates including:
+- Doji
+- Hammer
+- Shooting Star
+- Bullish / Bearish Engulfing
+- Inside Bar
+- Morning / Evening Star
+- Bullish / Bearish Outside Bar
+
+A candlestick pattern NEVER creates a trade by itself.
+
+## Classical chart-pattern candidates
+
+The engine detects geometric candidates for:
+- Double Top / Double Bottom
+- Head & Shoulders / Inverse H&S
+- Symmetrical / Ascending / Descending Triangle
+- Rising / Falling Wedge
+- Channel
+- Bull / Bear Flag
+
+They are deliberately labeled candidates. Pattern recognition from market data is
+uncertain and must not be treated as a guaranteed formation.
+
+## Price Action Confluence
+
+For each lane, Price Action is matched to the intended direction.
+
+SCALP:
+- 15m
+- 5m
+- 3m
+- 1m
+
+INTRADAY:
+- 1H
+- 30m
+- 15m
+
+SWING:
+- 1D
+- 4H
+
+States:
+- ALIGNED
+- NEUTRAL
+- OPPOSED
+
+Price Action can adjust Setup Score only modestly.
+
+It cannot create an entry if the original trend / structure / wave conditions do
+not already trigger.
+
+## Strong Price Action Veto
+
+A single Hammer, Engulfing candle, trendline or pattern cannot block a trade.
+
+A strong Veto requires:
+- substantial directional opposition, and
+- opposition from at least two independent Price Action families.
+
+Families:
+- Zones
+- Trendlines
+- Candlestick patterns
+- Chart patterns
+
+This reduces the risk of overreacting to a single noisy pattern.
+
+## Measuring whether V2.6 helps
+
+Every Paper trade now stores:
+- price_action_state
+- price_action_score
+- aligned/opposed PA evidence
+
+The Price Action tab compares actual results for:
+- ALIGNED
+- NEUTRAL
+- OPPOSED
+
+Metrics include:
+- trades
+- W/L
+- Win Rate
+- Net P&L
+- Avg R
+- MFE / MAE
+- Capture Efficiency
+
+The Lane Lab performs the same comparison independently for:
+- SCALP
+- INTRADAY
+- SWING
+
+This lets later versions decide from evidence whether specific Price Action rules
+should receive more weight, less weight, or be removed.
+
+## Important
+
+Price Action recognition is heuristic technical analysis, not a deterministic
+forecast. V2.6 remains Paper / Research only and sends no real orders.

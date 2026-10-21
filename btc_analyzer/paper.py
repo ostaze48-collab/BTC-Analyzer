@@ -1,5 +1,5 @@
 from __future__ import annotations
-import sqlite3, time, uuid
+import json, sqlite3, time, uuid
 from datetime import datetime, timedelta, timezone
 
 class PaperLedger:
@@ -28,6 +28,9 @@ class PaperLedger:
         "mae_r":"REAL DEFAULT 0",
         "capture_efficiency_pct":"REAL",
         "experiment_id":"TEXT",
+        "price_action_state":"TEXT",
+        "price_action_score":"REAL",
+        "price_action_evidence":"TEXT",
     }
 
     VALID_CLOSED_STATUSES=("WIN","LOSS","BE","EXPIRED")
@@ -133,7 +136,10 @@ class PaperLedger:
           mfe_r REAL DEFAULT 0,
           mae_r REAL DEFAULT 0,
           capture_efficiency_pct REAL,
-          experiment_id TEXT
+          experiment_id TEXT,
+          price_action_state TEXT,
+          price_action_score REAL,
+          price_action_evidence TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_trades_close ON trades(close_ts);
         CREATE INDEX IF NOT EXISTS idx_trades_lane ON trades(lane,status);
@@ -454,6 +460,13 @@ class PaperLedger:
         entry_fee=self._fee(notional)
         diag=s.get("diagnostics") or {}
         opp=s.get("opportunity") or {}
+        pa=s.get("price_action") or {}
+        pa_evidence={
+            "aligned":pa.get("aligned_evidence",[]),
+            "opposed":pa.get("opposed_evidence",[]),
+            "aligned_families":pa.get("aligned_families",[]),
+            "opposed_families":pa.get("opposed_families",[]),
+        }
 
         c.execute("""
           INSERT INTO trades(
@@ -461,17 +474,20 @@ class PaperLedger:
             quantity,risk_usd,notional_usd,setup_grade,setup_score,
             fees,reason,opportunity_id,market_regime,
             entry_timing,chasing_risk,available_rr,structural_obstacle,
-            mfe_price,mae_price,mfe_r,mae_r,experiment_id
-          ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            mfe_price,mae_price,mfe_r,mae_r,experiment_id,
+            price_action_state,price_action_score,price_action_evidence
+          ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,(
-            "V2.4",lane,side,now,entry,sl,tp1,tp2,
+            "V2.6",lane,side,now,entry,sl,tp1,tp2,
             qty,risk_usd,notional,s.get("setup_grade"),float(s.get("setup_score") or 0),
             entry_fee,"BEST_MAIN_LANE_ONLY",
             opp.get("opportunity_id"),market_regime,
             diag.get("entry_timing"),diag.get("chasing_risk"),
             float(diag.get("available_rr") or 0),
             diag.get("structural_obstacle"),
-            entry,entry,0.0,0.0,self.current_experiment_id
+            entry,entry,0.0,0.0,self.current_experiment_id,
+            pa.get("state","NEUTRAL"),float(pa.get("score") or 0),
+            json.dumps(pa_evidence,ensure_ascii=False)
         ))
         c.commit()
         c.close()
@@ -637,6 +653,9 @@ class PaperLedger:
                 "setup_grade":r["setup_grade"],"setup_score":r["setup_score"],
                 "entry_timing":r["entry_timing"],"chasing_risk":r["chasing_risk"],
                 "available_rr":r["available_rr"],
+                "price_action_state":r["price_action_state"],
+                "price_action_score":float(r["price_action_score"] or 0),
+                "price_action_evidence":r["price_action_evidence"],
                 "trade_state":"TP1_HIT" if tp1_hit else "OPEN",
                 "entry":entry,"live_price":live,
                 "sl":float(r["sl"]),"tp1":float(r["tp1"]),"tp2":float(r["tp2"]),
@@ -755,6 +774,43 @@ class PaperLedger:
             } for r in rows]
         c.close()
         return result
+
+    def price_action_stats(self):
+        c=self.con()
+        rows=c.execute(f"""
+          SELECT COALESCE(price_action_state,'UNKNOWN') label,
+                 COUNT(*) trades,
+                 SUM(CASE WHEN net_pnl>0 THEN 1 ELSE 0 END) wins,
+                 SUM(CASE WHEN net_pnl<0 THEN 1 ELSE 0 END) losses,
+                 AVG(realized_r) avg_r,
+                 AVG(mfe_r) avg_mfe_r,
+                 AVG(mae_r) avg_mae_r,
+                 AVG(capture_efficiency_pct) efficiency,
+                 SUM(net_pnl) net_pnl
+          FROM trades
+          WHERE experiment_id=? AND {self._valid_closed_clause()}
+          GROUP BY COALESCE(price_action_state,'UNKNOWN')
+          ORDER BY trades DESC
+        """,self._current_args()).fetchall()
+        c.close()
+
+        out=[]
+        for r in rows:
+            wins=int(r["wins"] or 0)
+            losses=int(r["losses"] or 0)
+            out.append({
+                "label":r["label"],
+                "trades":int(r["trades"] or 0),
+                "wins":wins,
+                "losses":losses,
+                "win_rate":wins/max(1,wins+losses)*100,
+                "avg_r":float(r["avg_r"] or 0),
+                "avg_mfe_r":float(r["avg_mfe_r"] or 0),
+                "avg_mae_r":float(r["avg_mae_r"] or 0),
+                "capture_efficiency":float(r["efficiency"] or 0),
+                "net_pnl":float(r["net_pnl"] or 0),
+            })
+        return out
 
     def _streaks(self,rows):
         max_w=max_l=cur_w=cur_l=0
