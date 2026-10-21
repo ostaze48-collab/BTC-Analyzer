@@ -1,21 +1,21 @@
-# BTC Analyzer V1.5
+# BTC Analyzer V1.5.1
 
-## New
-- Three independent paper-analysis lanes:
-  - SCALP: 5m setup + 1m execution, only when higher-timeframe direction permits it.
-  - INTRADAY: 30m setup + 15m trigger with 1H/4H/1D context.
-  - SWING: 1D/4H execution with 1W/3D/1D context.
-- Direction Permission scores for LONG and SHORT.
-- Parallel scalp shadow comparison:
-  - A_BASE_5M
-  - B_5M_3M
-  - C_FULL_SYNC
-  - D_5M_1M
-- Tracks per-strategy:
-  trades, win rate, profit factor, avg R, average trigger delay,
-  confirmation cost, and missed setups.
-- Separate paper performance for SCALP / INTRADAY / SWING.
-- Persistent storage still supported with DATA_DIR=/var/data.
+Hotfix for V1.5.
 
-## Important
-Research / paper only. No live orders.
+## Fixed
+- Converts NumPy boolean/float/integer scalar values to native Python values before JSON serialization.
+- `overextended` is now a native Python bool.
+- Research snapshot JSON uses a robust serializer.
+- Engine snapshot JSON uses the same robust serializer.
+
+This specifically fixes:
+`Object of type bool is not JSON serializable`
+
+All V1.5 functionality remains:
+- SCALP / INTRADAY / SWING
+- Higher-timeframe direction permission
+- A/B/C/D scalp shadow comparison
+- Confirmation cost / delay / missed setups
+- Research memory and persistent storage support
+
+Paper/Research only. No live trades.

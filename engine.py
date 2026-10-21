@@ -8,6 +8,19 @@ import numpy as np
 import pandas as pd
 
 BINANCE_SPOT_BASES=["https://data-api.binance.vision","https://api.binance.com"]
+
+def json_native(obj):
+    """Convert NumPy/Pandas scalar types into standard Python JSON types."""
+    if isinstance(obj, np.generic):
+        return obj.item()
+    if isinstance(obj, pd.Timestamp):
+        return obj.isoformat()
+    if isinstance(obj, set):
+        return list(obj)
+    return str(obj)
+
+def jdumps(obj):
+    return json.dumps(obj, ensure_ascii=False, default=json_native)
 BINANCE_FAPI="https://fapi.binance.com"
 
 NATIVE={
@@ -49,7 +62,7 @@ def macd_hist(c):
 class BinanceData:
     def __init__(self,symbol="BTCUSDT"):
         self.symbol=symbol; self.s=requests.Session()
-        self.s.headers.update({"User-Agent":"BTC-Analyzer-V1.5/1.0"})
+        self.s.headers.update({"User-Agent":"BTC-Analyzer-V1.5.1/1.0"})
         self.spot_provider=None
         self.last_spot_error=None
     def get(self,url,params=None):
@@ -200,7 +213,7 @@ class Analyzer:
         st,bos,sup,res=self.structure(df);wd,wt,ws,wc=self.wave(df)
         bbw=safe((c.rolling(20).std()*4/c.rolling(20).mean()).iloc[-1])
         vol="HIGH" if ap>2 or bbw>.08 else "LOW" if ap<.35 else "NORMAL"
-        over=abs(p-e20.iloc[-1])/max(safe(at.iloc[-1]),1e-9)>2.5
+        over=bool(abs(p-e20.iloc[-1])/max(safe(at.iloc[-1]),1e-9)>2.5)
         return TFAnalysis(tf,p,st,trend,ts,ms,vs,vol,ap,float(rr.iloc[-1]),float(ax.iloc[-1]),wd,wt,ws,wc,bos,sup,res,over)
     def group(self,A,tfs):
         vals=[]
@@ -584,18 +597,18 @@ class ResearchTracker:
           max_price,min_price
         ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,(
-          bucket,now,"V1.5",float(price),
+          bucket,now,"V1.5.1",float(price),
           state.get("bias"),safe(state.get("bias_score")),
           state.get("action"),state.get("quality"),safe(state.get("quality_score")),
           state.get("setup_state"),state.get("trigger_state"),safe(state.get("trigger_score")),
           state.get("veto_level"),
-          json.dumps(state.get("warnings",[]),ensure_ascii=False),
-          json.dumps(state.get("strong_veto",[]),ensure_ascii=False),
-          json.dumps(state.get("why_wait",[]),ensure_ascii=False),
-          json.dumps(state.get("waiting_for",[]),ensure_ascii=False),
-          json.dumps(state.get("hierarchy",{}),ensure_ascii=False),
-          json.dumps(state.get("families",{}),ensure_ascii=False),
-          json.dumps(state.get("timeframes",{}),ensure_ascii=False),
+          jdumps(state.get("warnings",[])),
+          jdumps(state.get("strong_veto",[])),
+          jdumps(state.get("why_wait",[])),
+          jdumps(state.get("waiting_for",[])),
+          jdumps(state.get("hierarchy",{})),
+          jdumps(state.get("families",{})),
+          jdumps(state.get("timeframes",{})),
           float(price),float(price)
         ))
         c.commit()
@@ -1226,4 +1239,4 @@ class Engine:
                 with self.lock:self.state={"status":"ERROR","error":str(e),"ts":time.time()}
             self.stop.wait(self.cfg.get("refresh_seconds",60))
     def snapshot(self):
-        with self.lock:return json.loads(json.dumps(self.state,default=str))
+        with self.lock:return json.loads(json.dumps(self.state,default=json_native))
