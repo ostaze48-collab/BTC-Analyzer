@@ -34,12 +34,15 @@ def state():
 def diag():
     s = engine.snapshot()
     return jsonify({
-        "app": "BTC Analyzer V1.1",
+        "app": "BTC Analyzer V1.2",
         "ui_embedded": True,
         "status": s.get("status"),
         "error": s.get("error"),
         "has_price": s.get("price") is not None if isinstance(s, dict) else False,
-        "timeframe_count": len(s.get("timeframes", {})) if isinstance(s, dict) else 0
+        "timeframe_count": len(s.get("timeframes", {})) if isinstance(s, dict) else 0,
+        "data_provider": s.get("data_provider") if isinstance(s, dict) else None,
+        "futures_status": (s.get("futures") or {}).get("status") if isinstance(s, dict) else None,
+        "futures_error": (s.get("futures") or {}).get("error") if isinstance(s, dict) else None
     })
 
 if __name__ == "__main__":

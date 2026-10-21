@@ -7,7 +7,7 @@ import requests
 import numpy as np
 import pandas as pd
 
-BINANCE_SPOT="https://api.binance.com"
+BINANCE_SPOT_BASES=["https://data-api.binance.vision","https://api.binance.com"]
 BINANCE_FAPI="https://fapi.binance.com"
 
 NATIVE={
@@ -49,11 +49,26 @@ def macd_hist(c):
 class BinanceData:
     def __init__(self,symbol="BTCUSDT"):
         self.symbol=symbol; self.s=requests.Session()
-        self.s.headers.update({"User-Agent":"BTC-Analyzer-V1/1.0"})
+        self.s.headers.update({"User-Agent":"BTC-Analyzer-V1.2/1.0"})
+        self.spot_provider=None
+        self.last_spot_error=None
     def get(self,url,params=None):
         r=self.s.get(url,params=params,timeout=15); r.raise_for_status(); return r.json()
+    def get_spot(self,path,params=None):
+        errors=[]
+        for base in BINANCE_SPOT_BASES:
+            try:
+                r=self.s.get(base+path,params=params,timeout=15)
+                r.raise_for_status()
+                self.spot_provider=base
+                self.last_spot_error=None
+                return r.json()
+            except Exception as e:
+                errors.append(f"{base}: {e}")
+        self.last_spot_error=" | ".join(errors)
+        raise RuntimeError("All Binance spot market-data endpoints failed: "+self.last_spot_error)
     def klines(self,iv,limit=500):
-        raw=self.get(BINANCE_SPOT+"/api/v3/klines",{"symbol":self.symbol,"interval":iv,"limit":limit})
+        raw=self.get_spot("/api/v3/klines",{"symbol":self.symbol,"interval":iv,"limit":limit})
         cols=["open_time","open","high","low","close","volume","close_time","quote_volume","trades","taker_base","taker_quote","ignore"]
         df=pd.DataFrame(raw,columns=cols)
         for c in ["open","high","low","close","volume","quote_volume","taker_base","taker_quote"]:
@@ -88,15 +103,21 @@ class BinanceData:
             except Exception: pass
         return out
     def futures(self):
-        x={"funding":None,"open_interest":None,"mark_price":None}
+        x={"funding":None,"open_interest":None,"mark_price":None,"status":"UNAVAILABLE","error":None}
+        errs=[]
         try:
             p=self.get(BINANCE_FAPI+"/fapi/v1/premiumIndex",{"symbol":self.symbol})
             x["funding"]=safe(p.get("lastFundingRate"),None); x["mark_price"]=safe(p.get("markPrice"),None)
-        except Exception: pass
+            x["status"]="PARTIAL"
+        except Exception as e:
+            errs.append("premiumIndex: "+str(e))
         try:
             o=self.get(BINANCE_FAPI+"/fapi/v1/openInterest",{"symbol":self.symbol})
             x["open_interest"]=safe(o.get("openInterest"),None)
-        except Exception: pass
+            x["status"]="OK" if x["mark_price"] is not None else "PARTIAL"
+        except Exception as e:
+            errs.append("openInterest: "+str(e))
+        if errs: x["error"]=" | ".join(errs)
         return x
 
 @dataclass
@@ -261,7 +282,7 @@ class Engine:
         self.paper=PaperTracker(root/"paper.db",cfg["paper_start_balance"],cfg["paper_risk_per_trade_pct"],cfg["signal_cooldown_minutes"])
         self.state={"status":"STARTING"};self.lock=threading.RLock();self.stop=threading.Event()
     def cycle(self):
-        s=self.an.state(self.data.all_frames(),self.data.futures());self.paper.update(s.get("price"));self.paper.add(s);s["paper"]=self.paper.stats();s["status"]="OK"
+        s=self.an.state(self.data.all_frames(),self.data.futures());s["data_provider"]=self.data.spot_provider;s["spot_error"]=self.data.last_spot_error;self.paper.update(s.get("price"));self.paper.add(s);s["paper"]=self.paper.stats();s["status"]="OK"
         with self.lock:self.state=s
     def run(self):
         while not self.stop.is_set():
