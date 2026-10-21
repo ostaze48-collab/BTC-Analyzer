@@ -1,16 +1,20 @@
-# BTC Analyzer V1.2
+# BTC Analyzer V1.3
 
-Fixes:
-- Spot market data now uses Binance's public market-data-only endpoint:
-  https://data-api.binance.vision
-- api.binance.com kept only as fallback.
-- Futures data is optional: a Futures HTTP 451 no longer stops the analyzer.
-- /diag exposes data_provider and futures status.
-- Dashboard remains embedded in app.py.
+## New in V1.3
+- 1Y / 6M / 3M are rolling macro-context analyses built from the last 365 / 180 / 90 daily candles.
+- Soft Warnings are separated from Strong Veto.
+- New SETUP state: NO_BIAS / FORMING / READY / BLOCKED.
+- New TRIGGER state: NOT_READY / READY / TRIGGERED / BLOCKED.
+- Dashboard explains WHY WAIT and WHAT WE ARE WAITING FOR.
+- Paper signals are still generated only for actual LONG/SHORT actions.
+- Binance public market-data endpoint remains the primary Spot source.
+- Futures remains optional and cannot stop the entire analyzer.
 
-Render:
-- Environment: Docker
-- Root Directory: blank
-- Health path: /health
+## Important
+V1.3 is a research/paper-trading system. It does not place real trades.
 
-No real trading. Research/Paper only.
+## Render
+Environment: Docker
+Root Directory: blank
+Health path: /health
+After upload use: Manual Deploy -> Clear build cache & deploy
