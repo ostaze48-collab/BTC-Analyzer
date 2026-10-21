@@ -194,6 +194,15 @@ class LaneComparisonLab:
                 out.append(x)
         return sorted(out,key=lambda x:(x.get("label") or "",x["lane"]))
 
+    def execution_plan_comparison(self):
+        out=[]
+        for lane,ledger in self.ledgers.items():
+            for row in ledger.execution_plan_stats():
+                x=dict(row)
+                x["lane"]=lane
+                out.append(x)
+        return sorted(out,key=lambda x:(x.get("label") or "",x["lane"]))
+
     def histories(self):
         return {
             lane:ledger.experiment_history()

@@ -337,6 +337,214 @@ class PriceActionEngine:
             "primary":max(pats,key=lambda x:x["strength"]) if pats else None,
         }
 
+    def _pattern_validation(self,p,df,tol,highs,lows):
+        """
+        Validate a detected geometric pattern against CLOSED candles.
+
+        Status:
+        - CANDIDATE: geometry exists but breakout is not confirmed.
+        - CONFIRMED: close is beyond the validation level.
+        - RETESTED: breakout happened and price retested the validation level.
+        - FAILED: invalidation level was breached.
+        - ACTIVE: channel-type structure without a directional breakout requirement.
+        """
+        name=p.get("name")
+        direction=p.get("direction","NEUTRAL")
+        d=p.setdefault("details",{})
+        close=float(df["close"].iloc[-1])
+        high=float(df["high"].iloc[-1])
+        low=float(df["low"].iloc[-1])
+        closes=df["close"].astype(float)
+        recent=closes.tail(6).tolist()
+
+        status="CANDIDATE"
+        breakout_level=None
+        invalidation=None
+        target=None
+        retest=False
+
+        if name=="DOUBLE_TOP":
+            tops=d.get("tops") or []
+            neckline=safe(d.get("neckline"))
+            if len(tops)>=2 and neckline:
+                peak=float(np.mean(tops))
+                breakout_level=neckline
+                invalidation=max(tops)+tol
+                target=neckline-max(peak-neckline,0)
+                if close>invalidation:
+                    status="FAILED"
+                elif close<neckline-tol*.15:
+                    status="CONFIRMED"
+                    if any(x<neckline-tol*.15 for x in recent[:-1]) and high>=neckline-tol:
+                        status="RETESTED"; retest=True
+
+        elif name=="DOUBLE_BOTTOM":
+            bottoms=d.get("bottoms") or []
+            neckline=safe(d.get("neckline"))
+            if len(bottoms)>=2 and neckline:
+                trough=float(np.mean(bottoms))
+                breakout_level=neckline
+                invalidation=min(bottoms)-tol
+                target=neckline+max(neckline-trough,0)
+                if close<invalidation:
+                    status="FAILED"
+                elif close>neckline+tol*.15:
+                    status="CONFIRMED"
+                    if any(x>neckline+tol*.15 for x in recent[:-1]) and low<=neckline+tol:
+                        status="RETESTED"; retest=True
+
+        elif name=="HEAD_AND_SHOULDERS" and len(highs)>=3:
+            a,b,c=highs[-3],highs[-2],highs[-1]
+            left_low=float(df["low"].iloc[a["pos"]:b["pos"]+1].min())
+            right_low=float(df["low"].iloc[b["pos"]:c["pos"]+1].min())
+            neckline=(left_low+right_low)/2
+            d["neckline"]=neckline
+            breakout_level=neckline
+            invalidation=float(b["price"])+tol
+            target=neckline-max(float(b["price"])-neckline,0)
+            if close>invalidation:
+                status="FAILED"
+            elif close<neckline-tol*.15:
+                status="CONFIRMED"
+                if any(x<neckline-tol*.15 for x in recent[:-1]) and high>=neckline-tol:
+                    status="RETESTED"; retest=True
+
+        elif name=="INVERSE_HEAD_AND_SHOULDERS" and len(lows)>=3:
+            a,b,c=lows[-3],lows[-2],lows[-1]
+            left_high=float(df["high"].iloc[a["pos"]:b["pos"]+1].max())
+            right_high=float(df["high"].iloc[b["pos"]:c["pos"]+1].max())
+            neckline=(left_high+right_high)/2
+            d["neckline"]=neckline
+            breakout_level=neckline
+            invalidation=float(b["price"])-tol
+            target=neckline+max(neckline-float(b["price"]),0)
+            if close<invalidation:
+                status="FAILED"
+            elif close>neckline+tol*.15:
+                status="CONFIRMED"
+                if any(x>neckline+tol*.15 for x in recent[:-1]) and low<=neckline+tol:
+                    status="RETESTED"; retest=True
+
+        elif name in {
+            "SYMMETRICAL_TRIANGLE","ASCENDING_TRIANGLE","DESCENDING_TRIANGLE",
+            "RISING_WEDGE","FALLING_WEDGE","CHANNEL"
+        } and len(highs)>=3 and len(lows)>=3:
+            hp=highs[-4:] if len(highs)>=4 else highs[-3:]
+            lp=lows[-4:] if len(lows)>=4 else lows[-3:]
+            xh=np.array([x["pos"] for x in hp],dtype=float)
+            yh=np.array([x["price"] for x in hp],dtype=float)
+            xl=np.array([x["pos"] for x in lp],dtype=float)
+            yl=np.array([x["price"] for x in lp],dtype=float)
+
+            sh,ih=np.polyfit(xh,yh,1)
+            sl,il=np.polyfit(xl,yl,1)
+            pos=len(df)-1
+            upper=float(sh*pos+ih)
+            lower=float(sl*pos+il)
+            if lower>upper:
+                lower,upper=upper,lower
+            d["upper_boundary"]=upper
+            d["lower_boundary"]=lower
+
+            width=max(upper-lower,tol)
+            if name=="CHANNEL":
+                status="ACTIVE"
+                target=upper if direction=="BULLISH" else lower if direction=="BEARISH" else None
+            else:
+                bullish_pattern=name in ("ASCENDING_TRIANGLE","FALLING_WEDGE")
+                bearish_pattern=name in ("DESCENDING_TRIANGLE","RISING_WEDGE")
+                neutral_pattern=name=="SYMMETRICAL_TRIANGLE"
+
+                if bullish_pattern:
+                    invalidation=lower-tol
+                    if close<lower-tol*.15:
+                        status="FAILED"
+                    elif close>upper+tol*.15:
+                        status="CONFIRMED"
+                        direction="BULLISH"
+                        breakout_level=upper
+                        target=close+width
+                        if any(x>upper+tol*.15 for x in recent[:-1]) and low<=upper+tol:
+                            status="RETESTED"; retest=True
+
+                elif bearish_pattern:
+                    invalidation=upper+tol
+                    if close>upper+tol*.15:
+                        status="FAILED"
+                    elif close<lower-tol*.15:
+                        status="CONFIRMED"
+                        direction="BEARISH"
+                        breakout_level=lower
+                        target=close-width
+                        if any(x<lower-tol*.15 for x in recent[:-1]) and high>=lower-tol:
+                            status="RETESTED"; retest=True
+
+                elif neutral_pattern:
+                    if close>upper+tol*.15:
+                        status="CONFIRMED"
+                        direction="BULLISH"
+                        breakout_level=upper
+                        invalidation=lower-tol
+                        target=close+width
+                        if any(x>upper+tol*.15 for x in recent[:-1]) and low<=upper+tol:
+                            status="RETESTED"; retest=True
+                    elif close<lower-tol*.15:
+                        status="CONFIRMED"
+                        direction="BEARISH"
+                        breakout_level=lower
+                        invalidation=upper+tol
+                        target=close-width
+                        if any(x<lower-tol*.15 for x in recent[:-1]) and high>=lower-tol:
+                            status="RETESTED"; retest=True
+
+        elif name in ("BULL_FLAG","BEAR_FLAG"):
+            look=df.tail(12)
+            prior=look.iloc[:-1]
+            if len(prior)>=5:
+                upper=float(prior["high"].max())
+                lower=float(prior["low"].min())
+                width=max(upper-lower,tol)
+                if name=="BULL_FLAG":
+                    breakout_level=upper
+                    invalidation=lower-tol
+                    if close<invalidation:
+                        status="FAILED"
+                    elif close>upper+tol*.10:
+                        status="CONFIRMED"
+                        target=close+width
+                        if low<=upper+tol:
+                            status="RETESTED"; retest=True
+                else:
+                    breakout_level=lower
+                    invalidation=upper+tol
+                    if close>invalidation:
+                        status="FAILED"
+                    elif close<lower-tol*.10:
+                        status="CONFIRMED"
+                        target=close-width
+                        if high>=lower-tol:
+                            status="RETESTED"; retest=True
+
+        p["direction"]=direction
+        p["validation"]={
+            "status":status,
+            "breakout_level":breakout_level,
+            "invalidation":invalidation,
+            "target":target,
+            "retest":bool(retest),
+        }
+        return p
+
+    @staticmethod
+    def _pattern_weight_multiplier(status):
+        return {
+            "CANDIDATE":0.35,
+            "ACTIVE":0.45,
+            "CONFIRMED":1.0,
+            "RETESTED":1.15,
+            "FAILED":0.0,
+        }.get(status,0.35)
+
     def chart_patterns(self,df):
         if df is None or len(df)<45:
             return {"patterns":[],"directional_score":0.0}
@@ -463,16 +671,32 @@ class PriceActionEngine:
                     "impulse_pct":float(impulse),"flag_range_pct":float(recent_range)
                 })
 
+        pats=[
+            self._pattern_validation(p,df,tol,highs,lows)
+            for p in pats
+        ]
+
         score=0.0
         for p in pats:
             sign=1 if p["direction"]=="BULLISH" else -1 if p["direction"]=="BEARISH" else 0
-            score+=sign*(p["strength"]/100)
+            status=(p.get("validation") or {}).get("status","CANDIDATE")
+            mult=self._pattern_weight_multiplier(status)
+            score+=sign*(p["strength"]/100)*mult
         score=clamp(score/2.2)
 
+        ranked=sorted(
+            pats,
+            key=lambda x:(
+                self._pattern_weight_multiplier((x.get("validation") or {}).get("status","CANDIDATE")),
+                x["strength"]
+            ),
+            reverse=True
+        )[:6]
+
         return {
-            "patterns":sorted(pats,key=lambda x:x["strength"],reverse=True)[:6],
+            "patterns":ranked,
             "directional_score":score,
-            "primary":max(pats,key=lambda x:x["strength"]) if pats else None,
+            "primary":ranked[0] if ranked else None,
         }
 
     def _timeframe_confluence(self,tf,df):
@@ -518,11 +742,16 @@ class PriceActionEngine:
                 bear.append((p["name"],w,p))
 
         for p in patterns.get("patterns",[]):
-            w=p["strength"]/100*.70
+            status=(p.get("validation") or {}).get("status","CANDIDATE")
+            mult=self._pattern_weight_multiplier(status)
+            w=p["strength"]/100*.70*mult
+            label=f"{p['name']}[{status}]"
+            if w<=0:
+                continue
             if p["direction"]=="BULLISH":
-                bull.append((p["name"],w,p))
+                bull.append((label,w,p))
             elif p["direction"]=="BEARISH":
-                bear.append((p["name"],w,p))
+                bear.append((label,w,p))
 
         # Saturating family score; this is evidence strength, not probability.
         bull_score=min(1.0,sum(x[1] for x in bull)/2.2)

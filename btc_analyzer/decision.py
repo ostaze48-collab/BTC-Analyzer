@@ -59,9 +59,13 @@ class DecisionEngine:
         return grade if order[grade]<=order[cap] else cap
 
     @staticmethod
-    def _plan(price,a,d,lane):
+    def _atr_plan(price,a,d,lane):
         if not price or not a or not d:
-            return {"entry":price,"sl":None,"tp1":None,"tp2":None,"risk_pct":None}
+            return {
+                "entry":price,"sl":None,"tp1":None,"tp2":None,
+                "risk_pct":None,"mode":"NONE",
+                "stop_source":"NONE","tp1_source":"NONE","tp2_source":"NONE"
+            }
         atr_pct=max(.01,safe(a.get("atr_pct"),.2))/100
         if lane=="SCALP":
             dist=max(price*atr_pct*1.15,price*.0015); r1,r2=1.3,1.8
@@ -73,7 +77,216 @@ class DecisionEngine:
             sl=price-dist; tp1=price+dist*r1; tp2=price+dist*r2
         else:
             sl=price+dist; tp1=price-dist*r1; tp2=price-dist*r2
-        return {"entry":price,"sl":sl,"tp1":tp1,"tp2":tp2,"risk_pct":dist/price*100}
+        return {
+            "entry":price,"sl":sl,"tp1":tp1,"tp2":tp2,
+            "risk_pct":dist/price*100,
+            "mode":"ATR_FALLBACK",
+            "stop_source":"ATR","tp1_source":"ATR_R1","tp2_source":"ATR_R2",
+            "invalidation_level":sl,
+            "pattern_target":None,
+        }
+
+    @staticmethod
+    def _confirmed_pattern_target(pa_tf,d,entry):
+        if not pa_tf:
+            return None,None
+        patterns=((pa_tf.get("chart_patterns") or {}).get("patterns") or [])
+        best=None
+        for p in patterns:
+            if (d>0 and p.get("direction")!="BULLISH") or (d<0 and p.get("direction")!="BEARISH"):
+                continue
+            v=p.get("validation") or {}
+            if v.get("status") not in ("CONFIRMED","RETESTED"):
+                continue
+            target=safe(v.get("target"),None)
+            if target is None:
+                continue
+            if d>0 and target<=entry:
+                continue
+            if d<0 and target>=entry:
+                continue
+            strength=safe(p.get("strength"))
+            status_bonus=12 if v.get("status")=="RETESTED" else 0
+            score=strength+status_bonus
+            if best is None or score>best[0]:
+                best=(score,float(target),f"{p.get('name')}[{v.get('status')}]")
+        return (best[1],best[2]) if best else (None,None)
+
+    @staticmethod
+    def _structure_candidates(price,a,d,pa_tf,buffer_abs):
+        stops=[]
+        targets=[]
+        if not pa_tf:
+            pa_tf={}
+
+        zones=(pa_tf.get("zones") or {}).get("zones") or []
+        for z in zones:
+            center=safe(z.get("center"),None)
+            if center is None or safe(z.get("strength"))<55:
+                continue
+            low=safe(z.get("low"),center)
+            high=safe(z.get("high"),center)
+            if d>0:
+                if high<price:
+                    stops.append((max(0,low-buffer_abs),"SUPPORT_ZONE"))
+                elif center>price:
+                    targets.append((center,"RESISTANCE_ZONE"))
+            else:
+                if low>price:
+                    stops.append((high+buffer_abs,"RESISTANCE_ZONE"))
+                elif center<price:
+                    targets.append((center,"SUPPORT_ZONE"))
+
+        tl=pa_tf.get("trendlines") or {}
+        if d>0:
+            line=tl.get("support_line")
+            if (
+                line and line.get("valid_direction") and
+                safe(line.get("r2"))>=.55 and
+                safe(line.get("projected"))<price
+            ):
+                stops.append((safe(line.get("projected"))-buffer_abs,"UP_TRENDLINE"))
+            opp=tl.get("resistance_line")
+            if opp and safe(opp.get("r2"))>=.55 and safe(opp.get("projected"))>price:
+                targets.append((safe(opp.get("projected")),"RESISTANCE_TRENDLINE"))
+        else:
+            line=tl.get("resistance_line")
+            if (
+                line and line.get("valid_direction") and
+                safe(line.get("r2"))>=.55 and
+                safe(line.get("projected"))>price
+            ):
+                stops.append((safe(line.get("projected"))+buffer_abs,"DOWN_TRENDLINE"))
+            opp=tl.get("support_line")
+            if opp and safe(opp.get("r2"))>=.55 and 0<safe(opp.get("projected"))<price:
+                targets.append((safe(opp.get("projected")),"SUPPORT_TRENDLINE"))
+
+        # Existing market-structure swing remains useful as a fallback
+        # structural invalidation candidate.
+        if d>0:
+            sup=safe(a.get("support"),None)
+            if sup is not None and 0<sup<price:
+                stops.append((sup-buffer_abs,"SWING_SUPPORT"))
+            res=safe(a.get("resistance"),None)
+            if res is not None and res>price:
+                targets.append((res,"SWING_RESISTANCE"))
+        else:
+            res=safe(a.get("resistance"),None)
+            if res is not None and res>price:
+                stops.append((res+buffer_abs,"SWING_RESISTANCE"))
+            sup=safe(a.get("support"),None)
+            if sup is not None and 0<sup<price:
+                targets.append((sup,"SWING_SUPPORT"))
+
+        return stops,targets
+
+    def _plan(self,price,a,d,lane,pa_tf=None):
+        fallback=self._atr_plan(price,a,d,lane)
+        if not price or not a or not d:
+            return fallback
+
+        price=float(price)
+        atr_abs=price*max(.01,safe(a.get("atr_pct"),.2))/100
+        buffer_abs=max(atr_abs*.25,price*.00035)
+
+        if lane=="SCALP":
+            min_stop=max(price*.0010,atr_abs*.55)
+            max_stop=price*.0080
+            default_r1,default_r2=1.3,1.8
+        elif lane=="INTRADAY":
+            min_stop=max(price*.0020,atr_abs*.60)
+            max_stop=price*.0250
+            default_r1,default_r2=1.5,2.2
+        else:
+            min_stop=max(price*.0040,atr_abs*.70)
+            max_stop=price*.0600
+            default_r1,default_r2=1.8,2.8
+
+        stops,targets=self._structure_candidates(
+            price,a,d,pa_tf,buffer_abs
+        )
+
+        valid_stops=[]
+        for level,source in stops:
+            if level is None or level<=0:
+                continue
+            if d>0 and level>=price:
+                continue
+            if d<0 and level<=price:
+                continue
+            dist=abs(price-level)
+            if min_stop<=dist<=max_stop:
+                valid_stops.append((dist,float(level),source))
+
+        if not valid_stops:
+            return fallback
+
+        # Closest trustworthy structural invalidation that is not too tight.
+        _,sl,stop_source=min(valid_stops,key=lambda x:x[0])
+        risk=abs(price-sl)
+
+        pattern_target,pattern_source=self._confirmed_pattern_target(
+            pa_tf,d,price
+        )
+        if pattern_target is not None:
+            targets.append((pattern_target,pattern_source))
+
+        valid_targets=[]
+        for level,source in targets:
+            if level is None:
+                continue
+            level=float(level)
+            if d>0 and level<=price:
+                continue
+            if d<0 and level>=price:
+                continue
+            rr=abs(level-price)/max(risk,1e-9)
+            if rr>=.60:
+                valid_targets.append((rr,level,source))
+
+        valid_targets.sort(key=lambda x:x[0])
+
+        # TP1: first meaningful obstacle at >=0.8R, otherwise normal R1.
+        tp1_candidate=next((x for x in valid_targets if x[0]>=.80),None)
+        if tp1_candidate:
+            _,tp1,tp1_source=tp1_candidate
+        else:
+            tp1=price+risk*default_r1*d
+            tp1_source="R_MULTIPLE"
+
+        # TP2: strongest farther structural/pattern target at >= lane minimum RR.
+        min_rr=self.MIN_RR[lane]
+        farther=[x for x in valid_targets if x[0]>=max(min_rr,1.20)]
+        if farther:
+            # Use farthest target up to 4R to avoid unrealistic distant projections.
+            bounded=[x for x in farther if x[0]<=4.0] or farther[:1]
+            _,tp2,tp2_source=max(bounded,key=lambda x:x[0])
+        else:
+            tp2=price+risk*default_r2*d
+            tp2_source="R_MULTIPLE"
+
+        # Keep TP ordering sane.
+        if d>0 and tp2<=tp1:
+            tp2=price+risk*max(default_r2,abs(tp1-price)/risk+.4)
+            tp2_source="R_MULTIPLE_AFTER_TP1"
+        elif d<0 and tp2>=tp1:
+            tp2=price-risk*max(default_r2,abs(tp1-price)/risk+.4)
+            tp2_source="R_MULTIPLE_AFTER_TP1"
+
+        return {
+            "entry":price,
+            "sl":sl,
+            "tp1":tp1,
+            "tp2":tp2,
+            "risk_pct":risk/price*100,
+            "mode":"STRUCTURE_AWARE",
+            "stop_source":stop_source,
+            "tp1_source":tp1_source,
+            "tp2_source":tp2_source,
+            "invalidation_level":sl,
+            "pattern_target":pattern_target,
+            "structure_rr_to_tp2":abs(tp2-price)/max(risk,1e-9),
+        }
 
     @staticmethod
     def _pa_family(name):
@@ -289,7 +502,7 @@ class DecisionEngine:
         scalp_grade=self._grade(scalp_score)
         if not a15 or not a3 or pa_scalp["state"]=="OPPOSED":
             scalp_grade=self._cap_grade(scalp_grade,"A")
-        scalp_plan=self._plan(live_price,t5,ds,"SCALP")
+        scalp_plan=self._plan(live_price,t5,ds,"SCALP",PA.get("5m"))
         scalp_diag=self._diagnostics(
             scalp_plan,t5,ds,"SCALP",scalp_trigger,
             PA.get("5m"),pa_scalp
@@ -312,7 +525,7 @@ class DecisionEngine:
         intra_grade=self._grade(intra_score)
         if not ia1h or pa_intra["state"]=="OPPOSED":
             intra_grade=self._cap_grade(intra_grade,"A")
-        intra_plan=self._plan(live_price,t15,di,"INTRADAY")
+        intra_plan=self._plan(live_price,t15,di,"INTRADAY",PA.get("15m"))
         intra_diag=self._diagnostics(
             intra_plan,t15,di,"INTRADAY",intra_trigger,
             PA.get("15m"),pa_intra
@@ -334,7 +547,7 @@ class DecisionEngine:
         swing_grade=self._grade(swing_score)
         if pa_swing["state"]=="OPPOSED":
             swing_grade=self._cap_grade(swing_grade,"A")
-        swing_plan=self._plan(live_price,t4h,dw,"SWING")
+        swing_plan=self._plan(live_price,t4h,dw,"SWING",PA.get("4H"))
         swing_diag=self._diagnostics(
             swing_plan,t4h,dw,"SWING",swing_trigger,
             PA.get("4H"),pa_swing

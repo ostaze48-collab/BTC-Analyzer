@@ -16,7 +16,7 @@ from btc_analyzer.lane_lab import LaneComparisonLab
 from btc_analyzer.price_action import PriceActionEngine
 
 class Engine:
-    VERSION="V2.6"
+    VERSION="V2.7"
 
     def __init__(self,root:Path,cfg:dict):
         self.root=root
@@ -122,12 +122,14 @@ class Engine:
         regime_performance=self.paper.regime_stats()
         calibration_stats=self.paper.calibration_stats()
         price_action_performance=self.paper.price_action_stats()
+        execution_plan_performance=self.paper.execution_plan_stats()
         performance_analytics=self.paper.analytics()
         time_performance=self.paper.time_performance()
         experiments=self.paper.experiment_history()
         lane_comparison=self.lane_lab.summary(live_price)
         lane_regime_comparison=self.lane_lab.regime_comparison()
         lane_price_action_comparison=self.lane_lab.price_action_comparison()
+        lane_execution_plan_comparison=self.lane_lab.execution_plan_comparison()
         recent_trades=self.paper.recent()
         research_stats=self.research.stats()
         shadow_stats=self.shadow.stats()
@@ -156,6 +158,8 @@ class Engine:
             "regime_research_only":True,
             "price_action_closed_candles_only":True,
             "price_action_standalone_trigger":False,
+            "structure_aware_execution":True,
+            "pattern_validation_lifecycle":True,
         }
 
         st={
@@ -175,12 +179,14 @@ class Engine:
             "regime_performance":regime_performance,
             "calibration_stats":calibration_stats,
             "price_action_performance":price_action_performance,
+            "execution_plan_performance":execution_plan_performance,
             "performance_analytics":performance_analytics,
             "time_performance":time_performance,
             "experiments":experiments,
             "lane_comparison":lane_comparison,
             "lane_regime_comparison":lane_regime_comparison,
             "lane_price_action_comparison":lane_price_action_comparison,
+            "lane_execution_plan_comparison":lane_execution_plan_comparison,
             "recent_trades":recent_trades,
             "active_opportunities":active_opportunities,
             "recent_opportunities":recent_opportunities,

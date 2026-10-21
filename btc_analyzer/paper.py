@@ -31,6 +31,10 @@ class PaperLedger:
         "price_action_state":"TEXT",
         "price_action_score":"REAL",
         "price_action_evidence":"TEXT",
+        "plan_mode":"TEXT",
+        "stop_source":"TEXT",
+        "tp1_source":"TEXT",
+        "tp2_source":"TEXT",
     }
 
     VALID_CLOSED_STATUSES=("WIN","LOSS","BE","EXPIRED")
@@ -139,7 +143,11 @@ class PaperLedger:
           experiment_id TEXT,
           price_action_state TEXT,
           price_action_score REAL,
-          price_action_evidence TEXT
+          price_action_evidence TEXT,
+          plan_mode TEXT,
+          stop_source TEXT,
+          tp1_source TEXT,
+          tp2_source TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_trades_close ON trades(close_ts);
         CREATE INDEX IF NOT EXISTS idx_trades_lane ON trades(lane,status);
@@ -475,8 +483,9 @@ class PaperLedger:
             fees,reason,opportunity_id,market_regime,
             entry_timing,chasing_risk,available_rr,structural_obstacle,
             mfe_price,mae_price,mfe_r,mae_r,experiment_id,
-            price_action_state,price_action_score,price_action_evidence
-          ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            price_action_state,price_action_score,price_action_evidence,
+            plan_mode,stop_source,tp1_source,tp2_source
+          ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,(
             "V2.6",lane,side,now,entry,sl,tp1,tp2,
             qty,risk_usd,notional,s.get("setup_grade"),float(s.get("setup_score") or 0),
@@ -487,7 +496,11 @@ class PaperLedger:
             diag.get("structural_obstacle"),
             entry,entry,0.0,0.0,self.current_experiment_id,
             pa.get("state","NEUTRAL"),float(pa.get("score") or 0),
-            json.dumps(pa_evidence,ensure_ascii=False)
+            json.dumps(pa_evidence,ensure_ascii=False),
+            plan.get("mode","ATR_FALLBACK"),
+            plan.get("stop_source","ATR"),
+            plan.get("tp1_source","ATR_R1"),
+            plan.get("tp2_source","ATR_R2")
         ))
         c.commit()
         c.close()
@@ -656,6 +669,10 @@ class PaperLedger:
                 "price_action_state":r["price_action_state"],
                 "price_action_score":float(r["price_action_score"] or 0),
                 "price_action_evidence":r["price_action_evidence"],
+                "plan_mode":r["plan_mode"],
+                "stop_source":r["stop_source"],
+                "tp1_source":r["tp1_source"],
+                "tp2_source":r["tp2_source"],
                 "trade_state":"TP1_HIT" if tp1_hit else "OPEN",
                 "entry":entry,"live_price":live,
                 "sl":float(r["sl"]),"tp1":float(r["tp1"]),"tp2":float(r["tp2"]),
@@ -774,6 +791,43 @@ class PaperLedger:
             } for r in rows]
         c.close()
         return result
+
+    def execution_plan_stats(self):
+        c=self.con()
+        rows=c.execute(f"""
+          SELECT COALESCE(plan_mode,'UNKNOWN') label,
+                 COUNT(*) trades,
+                 SUM(CASE WHEN net_pnl>0 THEN 1 ELSE 0 END) wins,
+                 SUM(CASE WHEN net_pnl<0 THEN 1 ELSE 0 END) losses,
+                 AVG(realized_r) avg_r,
+                 AVG(mfe_r) avg_mfe_r,
+                 AVG(mae_r) avg_mae_r,
+                 AVG(capture_efficiency_pct) efficiency,
+                 SUM(net_pnl) net_pnl
+          FROM trades
+          WHERE experiment_id=? AND {self._valid_closed_clause()}
+          GROUP BY COALESCE(plan_mode,'UNKNOWN')
+          ORDER BY trades DESC
+        """,self._current_args()).fetchall()
+        c.close()
+
+        out=[]
+        for r in rows:
+            wins=int(r["wins"] or 0)
+            losses=int(r["losses"] or 0)
+            out.append({
+                "label":r["label"],
+                "trades":int(r["trades"] or 0),
+                "wins":wins,
+                "losses":losses,
+                "win_rate":wins/max(1,wins+losses)*100,
+                "avg_r":float(r["avg_r"] or 0),
+                "avg_mfe_r":float(r["avg_mfe_r"] or 0),
+                "avg_mae_r":float(r["avg_mae_r"] or 0),
+                "capture_efficiency":float(r["efficiency"] or 0),
+                "net_pnl":float(r["net_pnl"] or 0),
+            })
+        return out
 
     def price_action_stats(self):
         c=self.con()
