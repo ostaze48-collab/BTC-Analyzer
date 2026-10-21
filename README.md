@@ -1,20 +1,30 @@
-# BTC Analyzer V1.3
+# BTC Analyzer V1.4 — Research & Persistence
 
-## New in V1.3
-- 1Y / 6M / 3M are rolling macro-context analyses built from the last 365 / 180 / 90 daily candles.
-- Soft Warnings are separated from Strong Veto.
-- New SETUP state: NO_BIAS / FORMING / READY / BLOCKED.
-- New TRIGGER state: NOT_READY / READY / TRIGGERED / BLOCKED.
-- Dashboard explains WHY WAIT and WHAT WE ARE WAITING FOR.
-- Paper signals are still generated only for actual LONG/SHORT actions.
-- Binance public market-data endpoint remains the primary Spot source.
-- Futures remains optional and cannot stop the entire analyzer.
+## New
+- Saves a decision snapshot every 5 minutes by default, including WAIT.
+- Stores WHY WAIT, warnings, vetoes, hierarchy, evidence families and timeframes.
+- Tracks observed price after 15m, 1h, 4h, 12h and 24h.
+- Tracks MFE and MAE for each snapshot.
+- Dashboard includes Research Memory and quality statistics.
+- CSV export at `/api/research.csv`.
+- Persistent-storage ready through environment variable `DATA_DIR`.
+
+## Render persistent storage
+The app works without a persistent disk, but local SQLite files may be lost on redeploy/restart.
+
+For durable research data:
+1. Add a Persistent Disk to the Render service.
+2. Mount it at `/var/data`.
+3. Add environment variable:
+   `DATA_DIR=/var/data`
+4. Redeploy.
+
+Then `/diag` should show:
+`"persistent_requested": true`
+
+## Databases
+- `paper.db` — actual paper LONG/SHORT signals.
+- `research.db` — all research snapshots, including WAIT decisions.
 
 ## Important
-V1.3 is a research/paper-trading system. It does not place real trades.
-
-## Render
-Environment: Docker
-Root Directory: blank
-Health path: /health
-After upload use: Manual Deploy -> Clear build cache & deploy
+Research/Paper only. No real orders are placed.

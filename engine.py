@@ -1,5 +1,5 @@
 from __future__ import annotations
-import json, math, time, sqlite3, threading
+import json, math, time, sqlite3, threading, os
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Dict, Optional
@@ -49,7 +49,7 @@ def macd_hist(c):
 class BinanceData:
     def __init__(self,symbol="BTCUSDT"):
         self.symbol=symbol; self.s=requests.Session()
-        self.s.headers.update({"User-Agent":"BTC-Analyzer-V1.3/1.0"})
+        self.s.headers.update({"User-Agent":"BTC-Analyzer-V1.4/1.0"})
         self.spot_provider=None
         self.last_spot_error=None
     def get(self,url,params=None):
@@ -496,13 +496,285 @@ class PaperTracker:
         for r in reversed(closed):bal+=bal*(self.risk/100)*float(r["result_r"])
         return {"total":len(rows),"open":sum(r["status"]=="OPEN" for r in rows),"closed":len(closed),"wins":len(wins),"losses":len(loss),"win_rate":len(wins)/max(1,len(wins)+len(loss))*100,"virtual_balance":bal,"recent":[dict(r) for r in rows[:30]]}
 
+
+class ResearchTracker:
+    """
+    Stores periodic decision snapshots, including WAIT decisions, and later
+    attaches observed outcomes. This lets us test whether warnings, vetoes,
+    setup states and quality grades were actually useful.
+    """
+    HORIZONS = {
+        "15m": 15*60,
+        "1h": 60*60,
+        "4h": 4*60*60,
+        "12h": 12*60*60,
+        "24h": 24*60*60,
+    }
+
+    def __init__(self, db_path, snapshot_interval_sec=300):
+        self.db_path=str(db_path)
+        self.snapshot_interval=int(snapshot_interval_sec)
+        self._init()
+
+    def con(self):
+        c=sqlite3.connect(self.db_path,timeout=10)
+        c.row_factory=sqlite3.Row
+        return c
+
+    def _init(self):
+        c=self.con()
+        c.executescript("""
+        CREATE TABLE IF NOT EXISTS research_snapshots(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          bucket_ts INTEGER UNIQUE,
+          ts REAL NOT NULL,
+          engine_version TEXT NOT NULL,
+          price REAL NOT NULL,
+          bias TEXT,
+          bias_score REAL,
+          action TEXT,
+          quality TEXT,
+          quality_score REAL,
+          setup_state TEXT,
+          trigger_state TEXT,
+          trigger_score REAL,
+          veto_level TEXT,
+          warnings_json TEXT,
+          strong_veto_json TEXT,
+          why_wait_json TEXT,
+          waiting_for_json TEXT,
+          hierarchy_json TEXT,
+          families_json TEXT,
+          timeframes_json TEXT,
+
+          mfe_pct REAL DEFAULT 0,
+          mae_pct REAL DEFAULT 0,
+          max_price REAL,
+          min_price REAL,
+
+          p15m REAL, r15m_pct REAL,
+          p1h REAL,  r1h_pct REAL,
+          p4h REAL,  r4h_pct REAL,
+          p12h REAL, r12h_pct REAL,
+          p24h REAL, r24h_pct REAL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_research_ts
+        ON research_snapshots(ts);
+
+        CREATE INDEX IF NOT EXISTS idx_research_quality
+        ON research_snapshots(quality, action, setup_state);
+        """)
+        c.commit()
+        c.close()
+
+    def maybe_snapshot(self,state):
+        price=state.get("price")
+        if price is None:
+            return
+        now=time.time()
+        bucket=int(now//self.snapshot_interval)*self.snapshot_interval
+        c=self.con()
+        c.execute("""
+        INSERT OR IGNORE INTO research_snapshots(
+          bucket_ts,ts,engine_version,price,bias,bias_score,action,
+          quality,quality_score,setup_state,trigger_state,trigger_score,
+          veto_level,warnings_json,strong_veto_json,why_wait_json,
+          waiting_for_json,hierarchy_json,families_json,timeframes_json,
+          max_price,min_price
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """,(
+          bucket,now,"V1.4",float(price),
+          state.get("bias"),safe(state.get("bias_score")),
+          state.get("action"),state.get("quality"),safe(state.get("quality_score")),
+          state.get("setup_state"),state.get("trigger_state"),safe(state.get("trigger_score")),
+          state.get("veto_level"),
+          json.dumps(state.get("warnings",[]),ensure_ascii=False),
+          json.dumps(state.get("strong_veto",[]),ensure_ascii=False),
+          json.dumps(state.get("why_wait",[]),ensure_ascii=False),
+          json.dumps(state.get("waiting_for",[]),ensure_ascii=False),
+          json.dumps(state.get("hierarchy",{}),ensure_ascii=False),
+          json.dumps(state.get("families",{}),ensure_ascii=False),
+          json.dumps(state.get("timeframes",{}),ensure_ascii=False),
+          float(price),float(price)
+        ))
+        c.commit()
+        c.close()
+
+    def update_outcomes(self,price):
+        if price is None:
+            return
+        now=time.time()
+        price=float(price)
+        c=self.con()
+
+        # Keep MFE / MAE updated until 24h after each snapshot.
+        rows=c.execute("""
+          SELECT id,ts,price,max_price,min_price
+          FROM research_snapshots
+          WHERE ts >= ?
+        """,(now-24*60*60-600,)).fetchall()
+
+        for r in rows:
+            base=float(r["price"])
+            mx=max(safe(r["max_price"],base),price)
+            mn=min(safe(r["min_price"],base),price)
+            mfe=(mx/base-1)*100
+            mae=(mn/base-1)*100
+            c.execute("""
+              UPDATE research_snapshots
+              SET max_price=?,min_price=?,mfe_pct=?,mae_pct=?
+              WHERE id=?
+            """,(mx,mn,mfe,mae,r["id"]))
+
+        # Fill due horizon observations once.
+        for label,seconds in self.HORIZONS.items():
+            pcol={"15m":"p15m","1h":"p1h","4h":"p4h","12h":"p12h","24h":"p24h"}[label]
+            rcol={"15m":"r15m_pct","1h":"r1h_pct","4h":"r4h_pct","12h":"r12h_pct","24h":"r24h_pct"}[label]
+            due=c.execute(f"""
+              SELECT id,price
+              FROM research_snapshots
+              WHERE {pcol} IS NULL AND ts <= ?
+              ORDER BY ts ASC
+              LIMIT 500
+            """,(now-seconds,)).fetchall()
+            for r in due:
+                base=float(r["price"])
+                ret=(price/base-1)*100
+                c.execute(f"""
+                  UPDATE research_snapshots
+                  SET {pcol}=?, {rcol}=?
+                  WHERE id=?
+                """,(price,ret,r["id"]))
+
+        c.commit()
+        c.close()
+
+    def stats(self):
+        c=self.con()
+        total=c.execute("SELECT COUNT(*) n FROM research_snapshots").fetchone()["n"]
+        waits=c.execute("SELECT COUNT(*) n FROM research_snapshots WHERE action='WAIT'").fetchone()["n"]
+        longs=c.execute("SELECT COUNT(*) n FROM research_snapshots WHERE action='LONG'").fetchone()["n"]
+        shorts=c.execute("SELECT COUNT(*) n FROM research_snapshots WHERE action='SHORT'").fetchone()["n"]
+
+        # Average future returns by bias direction: useful research metric,
+        # not a trading recommendation.
+        by_quality=[]
+        for q in ("A+","A","B","C"):
+            row=c.execute("""
+              SELECT
+                COUNT(*) n,
+                AVG(CASE
+                    WHEN bias='BULLISH' THEN r1h_pct
+                    WHEN bias='BEARISH' THEN -r1h_pct
+                    ELSE NULL END) aligned_1h,
+                AVG(CASE
+                    WHEN bias='BULLISH' THEN r4h_pct
+                    WHEN bias='BEARISH' THEN -r4h_pct
+                    ELSE NULL END) aligned_4h
+              FROM research_snapshots
+              WHERE quality=?
+            """,(q,)).fetchone()
+            by_quality.append({
+                "quality":q,
+                "n":int(row["n"] or 0),
+                "aligned_1h_avg_pct":safe(row["aligned_1h"],None),
+                "aligned_4h_avg_pct":safe(row["aligned_4h"],None)
+            })
+
+        # How WAIT decisions behaved by warning.
+        warning_keys=[
+          "VOLUME_OPPOSES","LOWER_TF_NOT_SYNCHRONIZED",
+          "ENTRY_ALIGNMENT_WEAK","HIGH_VOLATILITY",
+          "MOMENTUM_OPPOSES","MACRO_WEAK"
+        ]
+        warning_stats=[]
+        for w in warning_keys:
+            row=c.execute("""
+              SELECT COUNT(*) n,
+                     AVG(CASE
+                        WHEN bias='BULLISH' THEN r1h_pct
+                        WHEN bias='BEARISH' THEN -r1h_pct
+                        ELSE NULL END) aligned_1h
+              FROM research_snapshots
+              WHERE warnings_json LIKE ?
+            """,(f'%"{w}"%',)).fetchone()
+            warning_stats.append({
+              "warning":w,
+              "n":int(row["n"] or 0),
+              "aligned_1h_avg_pct":safe(row["aligned_1h"],None)
+            })
+
+        recent=[dict(r) for r in c.execute("""
+          SELECT id,ts,price,bias,action,quality,quality_score,
+                 setup_state,trigger_state,veto_level,
+                 mfe_pct,mae_pct,r15m_pct,r1h_pct,r4h_pct,r12h_pct,r24h_pct
+          FROM research_snapshots
+          ORDER BY id DESC LIMIT 25
+        """).fetchall()]
+        c.close()
+        return {
+          "total_snapshots":int(total),
+          "wait_snapshots":int(waits),
+          "long_snapshots":int(longs),
+          "short_snapshots":int(shorts),
+          "by_quality":by_quality,
+          "warning_stats":warning_stats,
+          "recent":recent
+        }
+
+    def export_rows(self,limit=5000):
+        c=self.con()
+        rows=[dict(r) for r in c.execute("""
+          SELECT * FROM research_snapshots
+          ORDER BY id DESC LIMIT ?
+        """,(int(limit),)).fetchall()]
+        c.close()
+        return rows
+
 class Engine:
     def __init__(self,root,cfg):
-        self.cfg=cfg;self.data=BinanceData(cfg["symbol"]);self.an=Analyzer()
-        self.paper=PaperTracker(root/"paper.db",cfg["paper_start_balance"],cfg["paper_risk_per_trade_pct"],cfg["signal_cooldown_minutes"])
-        self.state={"status":"STARTING"};self.lock=threading.RLock();self.stop=threading.Event()
+        self.cfg=cfg
+        self.data=BinanceData(cfg["symbol"])
+        self.an=Analyzer()
+
+        # Render persistent disk can be mounted at /var/data and configured
+        # with DATA_DIR=/var/data. Without it, we fall back to local ./data.
+        configured=os.environ.get("DATA_DIR")
+        self.data_dir=Path(configured) if configured else (root/"data")
+        self.data_dir.mkdir(parents=True,exist_ok=True)
+
+        self.paper=PaperTracker(
+            self.data_dir/"paper.db",
+            cfg["paper_start_balance"],
+            cfg["paper_risk_per_trade_pct"],
+            cfg["signal_cooldown_minutes"]
+        )
+        self.research=ResearchTracker(
+            self.data_dir/"research.db",
+            cfg.get("research_snapshot_seconds",300)
+        )
+        self.state={"status":"STARTING"}
+        self.lock=threading.RLock()
+        self.stop=threading.Event()
     def cycle(self):
-        s=self.an.state(self.data.all_frames(),self.data.futures());s["data_provider"]=self.data.spot_provider;s["spot_error"]=self.data.last_spot_error;self.paper.update(s.get("price"));self.paper.add(s);s["paper"]=self.paper.stats();s["status"]="OK"
+        s=self.an.state(self.data.all_frames(),self.data.futures())
+        s["data_provider"]=self.data.spot_provider
+        s["spot_error"]=self.data.last_spot_error
+
+        self.paper.update(s.get("price"))
+        self.paper.add(s)
+
+        self.research.update_outcomes(s.get("price"))
+        self.research.maybe_snapshot(s)
+
+        s["paper"]=self.paper.stats()
+        s["research"]=self.research.stats()
+        s["storage"]={
+          "data_dir":str(self.data_dir),
+          "persistent_requested":bool(os.environ.get("DATA_DIR"))
+        }
+        s["status"]="OK"
         with self.lock:self.state=s
     def run(self):
         while not self.stop.is_set():

@@ -26,5 +26,6 @@
     "5m",
     "3m",
     "1m"
-  ]
+  ],
+  "research_snapshot_seconds": 300
 }
