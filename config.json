@@ -27,5 +27,6 @@
     "3m",
     "1m"
   ],
-  "research_snapshot_seconds": 300
+  "research_snapshot_seconds": 300,
+  "bitbo_refresh_seconds": 900
 }

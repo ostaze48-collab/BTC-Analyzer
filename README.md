@@ -1,21 +1,36 @@
-# BTC Analyzer V1.5.1
+# BTC Analyzer V1.6 — Bitcoin Context Engine
 
-Hotfix for V1.5.
+## Always available without another API
+- Mayer Multiple from Binance daily SMA200.
+- 200-week moving average and distance from it.
 
-## Fixed
-- Converts NumPy boolean/float/integer scalar values to native Python values before JSON serialization.
-- `overextended` is now a native Python bool.
-- Research snapshot JSON uses a robust serializer.
-- Engine snapshot JSON uses the same robust serializer.
+## Optional Bitbo API
+Set the Render environment variable:
 
-This specifically fixes:
-`Object of type bool is not JSON serializable`
+BITBO_API_KEY=your_key_here
 
-All V1.5 functionality remains:
-- SCALP / INTRADAY / SWING
-- Higher-timeframe direction permission
-- A/B/C/D scalp shadow comparison
-- Confirmation cost / delay / missed setups
-- Research memory and persistent storage support
+The key must stay in Render Environment and must not be committed to GitHub.
 
-Paper/Research only. No live trades.
+V1.6 requests only five Bitbo endpoints:
+- realized-price
+- mvrv
+- nupl-ratio
+- sopr
+- etf-flows-new-btc
+
+Refresh interval: 15 minutes.
+
+## Decision role
+Bitcoin Context is deliberately a small directional-permission tilt.
+It cannot create a trade by itself and is not a hard veto.
+
+## Research
+`context_compare.db` stores SUPPORTIVE / NEUTRAL / HEADWIND context cases
+and later measures aligned 1H and 4H outcomes. This is how we will decide
+whether adding on-chain context actually improves the technical system.
+
+All V1.5.1 functionality remains:
+SCALP / INTRADAY / SWING, A/B/C/D confirmation comparison,
+paper trading, research memory and persistent storage.
+
+Research/Paper only. No live orders.

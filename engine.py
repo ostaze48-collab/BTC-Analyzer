@@ -62,7 +62,7 @@ def macd_hist(c):
 class BinanceData:
     def __init__(self,symbol="BTCUSDT"):
         self.symbol=symbol; self.s=requests.Session()
-        self.s.headers.update({"User-Agent":"BTC-Analyzer-V1.5.1/1.0"})
+        self.s.headers.update({"User-Agent":"BTC-Analyzer-V1.6/1.0"})
         self.spot_provider=None
         self.last_spot_error=None
     def get(self,url,params=None):
@@ -597,7 +597,7 @@ class ResearchTracker:
           max_price,min_price
         ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,(
-          bucket,now,"V1.5.1",float(price),
+          bucket,now,"V1.6",float(price),
           state.get("bias"),safe(state.get("bias_score")),
           state.get("action"),state.get("quality"),safe(state.get("quality_score")),
           state.get("setup_state"),state.get("trigger_state"),safe(state.get("trigger_score")),
@@ -746,6 +746,216 @@ class ResearchTracker:
         return rows
 
 
+
+class BitcoinContextEngine:
+    """
+    Optional long-horizon Bitcoin context.
+
+    Always available from Binance:
+      - Mayer Multiple = spot / daily SMA200
+      - 200W moving average and price distance
+
+    Optional Bitbo API, when BITBO_API_KEY is configured:
+      - Realized Price
+      - MVRV
+      - NUPL
+      - SOPR
+      - ETF flows versus new BTC supply
+
+    Context influence is deliberately bounded. It may tilt directional
+    permission but never creates a trade by itself and is not a hard veto.
+    """
+    BASE="https://charts.bitbo.io/api/v1"
+    ENDPOINTS={
+        "realized_price":"realized-price",
+        "mvrv":"mvrv",
+        "nupl":"nupl-ratio",
+        "sopr":"sopr",
+        "etf":"etf-flows-new-btc",
+    }
+
+    def __init__(self, session=None, refresh_seconds=900):
+        self.s=session or requests.Session()
+        self.api_key=os.environ.get("BITBO_API_KEY","").strip()
+        self.refresh_seconds=max(900,int(refresh_seconds))
+        self.last_fetch=0.0
+        self.remote={}
+        self.remote_status="NO_API_KEY" if not self.api_key else "STARTING"
+        self.remote_error=None
+
+    def _latest(self, endpoint):
+        r=self.s.get(
+            f"{self.BASE}/{endpoint}/",
+            params={"latest":"true","api_key":self.api_key},
+            timeout=15
+        )
+        r.raise_for_status()
+        payload=r.json()
+        rows=payload.get("data") or []
+        return rows[-1] if rows else None
+
+    def refresh_remote(self):
+        if not self.api_key:
+            self.remote_status="NO_API_KEY"
+            return
+        now=time.time()
+        if now-self.last_fetch < self.refresh_seconds:
+            return
+
+        out={}
+        errors=[]
+        # Five requests exactly; refresh no more often than every 15 minutes.
+        for key,endpoint in self.ENDPOINTS.items():
+            try:
+                out[key]=self._latest(endpoint)
+            except Exception as e:
+                errors.append(f"{key}: {e}")
+
+        self.last_fetch=now
+        if out:
+            self.remote=out
+        self.remote_error=" | ".join(errors) if errors else None
+        self.remote_status="OK" if out and not errors else "PARTIAL" if out else "ERROR"
+
+    @staticmethod
+    def _value(row, index, default=None):
+        try:
+            if row is None:
+                return default
+            return float(row[index])
+        except Exception:
+            return default
+
+    def local_metrics(self, frames, spot):
+        out={
+            "mayer_multiple":None,
+            "sma200d":None,
+            "ma200w":None,
+            "distance_200w_pct":None,
+        }
+        if spot is None:
+            return out
+
+        try:
+            d=frames.get("1D")
+            if d is not None and len(d)>=200:
+                sma=float(d["close"].tail(200).mean())
+                out["sma200d"]=sma
+                out["mayer_multiple"]=float(spot)/sma if sma else None
+        except Exception:
+            pass
+
+        try:
+            w=frames.get("1W")
+            if w is not None and len(w)>=200:
+                ma=float(w["close"].tail(200).mean())
+                out["ma200w"]=ma
+                out["distance_200w_pct"]=(float(spot)/ma-1)*100 if ma else None
+        except Exception:
+            pass
+        return out
+
+    def evaluate(self, frames, spot):
+        self.refresh_remote()
+        local=self.local_metrics(frames,spot)
+
+        realized_price=self._value(self.remote.get("realized_price"),1)
+        mvrv=self._value(self.remote.get("mvrv"),1)
+        nupl=self._value(self.remote.get("nupl"),1)
+        sopr=self._value(self.remote.get("sopr"),1)
+
+        etf_row=self.remote.get("etf")
+        etf_7d=self._value(etf_row,3)
+        new_supply_7d=self._value(etf_row,4)
+        etf_minus_supply=self._value(etf_row,5)
+
+        # Heuristic V1.6 scores. Their purpose is research; the Context Shadow
+        # Lab will tell us whether they add value before we increase influence.
+        components={}
+
+        mm=local.get("mayer_multiple")
+        if mm is not None:
+            if mm < .85:
+                components["mayer"]=.08
+            elif mm < 1.0:
+                components["mayer"]=.03
+            elif mm <= 1.6:
+                components["mayer"]=.10
+            elif mm <= 2.2:
+                components["mayer"]=.01
+            else:
+                components["mayer"]=-.10
+
+        d200=local.get("distance_200w_pct")
+        if d200 is not None:
+            components["ma200w"]=.08 if d200>0 else -.08
+
+        if realized_price and spot:
+            ratio=float(spot)/realized_price
+            if ratio < .95:
+                components["realized_price"]=.06
+            elif ratio < 2.0:
+                components["realized_price"]=.08
+            elif ratio < 3.0:
+                components["realized_price"]=.01
+            else:
+                components["realized_price"]=-.08
+
+        if mvrv is not None:
+            if mvrv < 1.0:
+                components["mvrv"]=.06
+            elif mvrv < 2.0:
+                components["mvrv"]=.08
+            elif mvrv < 3.0:
+                components["mvrv"]=.01
+            else:
+                components["mvrv"]=-.08
+
+        if nupl is not None:
+            if nupl < 0:
+                components["nupl"]=.04
+            elif nupl < .55:
+                components["nupl"]=.06
+            elif nupl < .75:
+                components["nupl"]=.01
+            else:
+                components["nupl"]=-.07
+
+        if sopr is not None:
+            if sopr < .98:
+                components["sopr"]=-.04
+            elif sopr <= 1.05:
+                components["sopr"]=.02
+            else:
+                components["sopr"]=-.02
+
+        if etf_minus_supply is not None:
+            components["etf_vs_supply"]=.08 if etf_minus_supply>0 else -.08
+
+        score=clamp(sum(components.values()),-.35,.35)
+        regime="SUPPORTIVE" if score>=.12 else "HEADWIND" if score<=-.12 else "NEUTRAL"
+
+        return {
+            "score":score,
+            "regime":regime,
+            "components":components,
+            "local":local,
+            "bitbo":{
+                "enabled":bool(self.api_key),
+                "status":self.remote_status,
+                "error":self.remote_error,
+                "realized_price":realized_price,
+                "mvrv":mvrv,
+                "nupl":nupl,
+                "sopr":sopr,
+                "etf_7d_avg_btc":etf_7d,
+                "new_supply_7d_avg_btc":new_supply_7d,
+                "etf_minus_supply_btc":etf_minus_supply,
+                "last_fetch_ts":self.last_fetch or None,
+            }
+        }
+
+
 class MultiHorizonDecision:
     """
     Builds three independent paper-analysis lanes:
@@ -820,7 +1030,7 @@ class MultiHorizonDecision:
         return {"entry":price,"sl":sl,"tp1":tp1,"tp2":tp2,"risk_pct":dist/price*100}
 
     @classmethod
-    def evaluate(cls,state):
+    def evaluate(cls,state,context=None):
         T=state.get("timeframes",{})
         cls._current_timeframes=T
         price=state.get("price")
@@ -840,10 +1050,14 @@ class MultiHorizonDecision:
         # Global bias must support scalping direction. If global bias is neutral,
         # require an unusually strong local context instead.
         global_d=1 if state.get("bias")=="BULLISH" else -1 if state.get("bias")=="BEARISH" else 0
+        context_score=safe((context or {}).get("score"),0.0)
+        context_alignment=context_score*ds if ds else 0.0
+
         scalp_permission=bool(ds and (
             global_d==ds or
             (global_d==0 and abs(scalp_ctx)>=.45)
-        ) and safe(state.get("hierarchy",{}).get("intraday"))*ds>0)
+        ) and safe(state.get("hierarchy",{}).get("intraday"))*ds>0
+          and context_alignment>-0.25)
 
         t1=T.get("1m"); t3=T.get("3m"); t5=T.get("5m"); t15=T.get("15m"); t30=T.get("30m")
         t1h=T.get("1H"); t4h=T.get("4H"); t1d=T.get("1D")
@@ -901,8 +1115,9 @@ class MultiHorizonDecision:
         swing_action=("LONG" if dw>0 else "SHORT") if swing_trigger and swing_q in ("A","A+") else "WAIT"
 
         def lane(name,d,ctx,action,q,score,trigger,plan_tf,why):
-            long_perm=max(0,min(100,50+ctx*50))
-            short_perm=max(0,min(100,50-ctx*50))
+            context_tilt=safe((context or {}).get("score"),0.0)*15
+            long_perm=max(0,min(100,50+ctx*50+context_tilt))
+            short_perm=max(0,min(100,50-ctx*50-context_tilt))
             return {
               "lane":name,
               "side_bias":"LONG" if d>0 else "SHORT" if d<0 else "NEUTRAL",
@@ -940,6 +1155,7 @@ class MultiHorizonDecision:
 
         return {
           "lanes":lanes,
+          "context_score":safe((context or {}).get("score"),0.0),
           "scalp_shadow":{
             "common_ready":common_scalp,
             "side":"LONG" if ds>0 else "SHORT" if ds<0 else "NEUTRAL",
@@ -1175,6 +1391,105 @@ class ShadowComparisonLab:
         c.close()
         return {"strategies":out,"recent":recent,"active_setup":self.active["id"] if self.active else None}
 
+
+class ContextShadowLab:
+    """Researches whether Bitcoin Context improves forward outcomes."""
+    def __init__(self,path):
+        self.path=str(path)
+        self._init()
+
+    def con(self):
+        c=sqlite3.connect(self.path,timeout=10)
+        c.row_factory=sqlite3.Row
+        return c
+
+    def _init(self):
+        c=self.con()
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS context_cases(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          bucket_ts INTEGER UNIQUE,
+          ts REAL,
+          price REAL,
+          technical_bias TEXT,
+          technical_action TEXT,
+          context_regime TEXT,
+          context_score REAL,
+          scalp_long_permission REAL,
+          scalp_short_permission REAL,
+          r1h_pct REAL,
+          r4h_pct REAL
+        )""")
+        c.commit()
+        c.close()
+
+    def snapshot(self,state,context,lanes):
+        price=state.get("price")
+        if price is None:
+            return
+        now=time.time()
+        bucket=int(now//300)*300
+        scalp=lanes.get("SCALP",{})
+        c=self.con()
+        c.execute("""
+          INSERT OR IGNORE INTO context_cases(
+            bucket_ts,ts,price,technical_bias,technical_action,
+            context_regime,context_score,scalp_long_permission,scalp_short_permission
+          ) VALUES(?,?,?,?,?,?,?,?,?)
+        """,(
+            bucket,now,float(price),
+            state.get("bias"),state.get("action"),
+            context.get("regime"),safe(context.get("score")),
+            safe(scalp.get("long_permission")),safe(scalp.get("short_permission"))
+        ))
+        c.commit()
+        c.close()
+
+    def update(self,price):
+        if price is None:
+            return
+        now=time.time()
+        p=float(price)
+        c=self.con()
+        for col,seconds in (("r1h_pct",3600),("r4h_pct",14400)):
+            rows=c.execute(
+                f"SELECT id,price FROM context_cases WHERE {col} IS NULL AND ts<=? LIMIT 500",
+                (now-seconds,)
+            ).fetchall()
+            for r in rows:
+                ret=(p/float(r["price"])-1)*100
+                c.execute(f"UPDATE context_cases SET {col}=? WHERE id=?",(ret,r["id"]))
+        c.commit()
+        c.close()
+
+    def stats(self):
+        c=self.con()
+        by_regime=[]
+        for regime in ("SUPPORTIVE","NEUTRAL","HEADWIND"):
+            r=c.execute("""
+              SELECT COUNT(*) n,
+                     AVG(CASE
+                       WHEN technical_bias='BULLISH' THEN r1h_pct
+                       WHEN technical_bias='BEARISH' THEN -r1h_pct
+                     END) aligned1h,
+                     AVG(CASE
+                       WHEN technical_bias='BULLISH' THEN r4h_pct
+                       WHEN technical_bias='BEARISH' THEN -r4h_pct
+                     END) aligned4h
+              FROM context_cases
+              WHERE context_regime=?
+            """,(regime,)).fetchone()
+            by_regime.append({
+                "regime":regime,
+                "n":int(r["n"] or 0),
+                "aligned_1h_avg_pct":safe(r["aligned1h"],None),
+                "aligned_4h_avg_pct":safe(r["aligned4h"],None),
+            })
+        total=c.execute("SELECT COUNT(*) n FROM context_cases").fetchone()["n"]
+        c.close()
+        return {"total":int(total),"by_regime":by_regime}
+
+
 class Engine:
     def __init__(self,root,cfg):
         self.cfg=cfg
@@ -1199,25 +1514,36 @@ class Engine:
         )
         self.lane_paper=LanePaperTracker(self.data_dir/"lane_paper.db")
         self.shadow=ShadowComparisonLab(self.data_dir/"shadow_compare.db")
+        self.context_engine=BitcoinContextEngine(
+            session=self.data.s,
+            refresh_seconds=cfg.get("bitbo_refresh_seconds",900)
+        )
+        self.context_shadow=ContextShadowLab(self.data_dir/"context_compare.db")
         self.multi=MultiHorizonDecision()
         self.state={"status":"STARTING"}
         self.lock=threading.RLock()
         self.stop=threading.Event()
     def cycle(self):
-        s=self.an.state(self.data.all_frames(),self.data.futures())
+        frames=self.data.all_frames()
+        s=self.an.state(frames,self.data.futures())
         s["data_provider"]=self.data.spot_provider
         s["spot_error"]=self.data.last_spot_error
 
         self.paper.update(s.get("price"))
         self.paper.add(s)
 
-        mh=self.multi.evaluate(s)
+        context=self.context_engine.evaluate(frames,s.get("price"))
+        s["bitcoin_context"]=context
+
+        mh=self.multi.evaluate(s,context)
         s["lanes"]=mh["lanes"]
 
         self.lane_paper.update(s.get("price"))
         self.lane_paper.maybe_add(s["lanes"])
 
         self.shadow.process(mh["scalp_shadow"],s.get("price"))
+        self.context_shadow.update(s.get("price"))
+        self.context_shadow.snapshot(s,context,s["lanes"])
 
         self.research.update_outcomes(s.get("price"))
         self.research.maybe_snapshot(s)
@@ -1225,6 +1551,7 @@ class Engine:
         s["paper"]=self.paper.stats()
         s["lane_paper"]=self.lane_paper.stats()
         s["shadow_compare"]=self.shadow.stats()
+        s["context_compare"]=self.context_shadow.stats()
         s["research"]=self.research.stats()
         s["storage"]={
           "data_dir":str(self.data_dir),
