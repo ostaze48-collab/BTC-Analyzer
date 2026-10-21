@@ -1,4 +1,4 @@
-# BTC Analyzer V2.0 — Quality & Measurement Release
+# BTC Analyzer V2.1 — Quality & Measurement Release
 
 V2.0 freezes indicator expansion and focuses on:
 1. data quality,
@@ -146,3 +146,13 @@ Old databases are not deleted.
 This is a research and paper-trading system.
 It does not send real orders.
 No indicator or score guarantees profit.
+
+
+## V2.1 additions
+
+- Open Trades panel with OPEN / TP1_HIT, age, unrealized P&L, Current R and distances to SL/TP1/TP2.
+- Unrealized P&L is separate from realized day/week/month/total P&L.
+- Paper Risk Guard: daily loss limit, consecutive-loss pause and maximum open trades.
+- Market Regime classifier: TREND / PULLBACK / RANGE / COMPRESSION / EXHAUSTION / REVERSAL_CANDIDATE / HIGH_VOL / MIXED.
+- Market Regime is research/display-only in V2.1 and does not alter paper decisions.
+- V2.0 already used full-bucket validation for custom 12D/2W candles; V2.1 retains that closed-bar protection.

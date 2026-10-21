@@ -10,9 +10,10 @@ from btc_analyzer.context import BitcoinContextEngine
 from btc_analyzer.decision import DecisionEngine
 from btc_analyzer.paper import PaperLedger
 from btc_analyzer.research import ResearchJournal, ShadowLab
+from btc_analyzer.regime import MarketRegimeEngine
 
 class Engine:
-    VERSION="V2.0"
+    VERSION="V2.1"
 
     def __init__(self,root:Path,cfg:dict):
         self.root=root
@@ -27,6 +28,7 @@ class Engine:
             refresh_seconds=cfg.get("bitbo_refresh_seconds",900)
         )
         self.decision=DecisionEngine()
+        self.regime=MarketRegimeEngine()
         self.paper=PaperLedger(self.data_dir/"paper_v2.db",cfg)
         self.research=ResearchJournal(
             self.data_dir/"research_v2.db",
@@ -63,6 +65,7 @@ class Engine:
         self.shadow.process_bar(closed_bar)
 
         analysis=self.analyzer.analyze(frames,futures)
+        market_regime=self.regime.evaluate(analysis)
 
         try:
             btc_context=self.context.evaluate(frames,live_price)
@@ -80,6 +83,9 @@ class Engine:
         self.research.snapshot(live_price,analysis,decision,btc_context)
 
         paper_pnl=self.paper.pnl_dashboard()
+        open_positions=self.paper.open_positions(live_price)
+        unrealized=self.paper.unrealized_summary(live_price)
+        risk_guard=self.paper.risk_guard()
         lane_stats=self.paper.lane_stats()
         recent_trades=self.paper.recent()
         research_stats=self.research.stats()
@@ -103,6 +109,8 @@ class Engine:
             "data_dir":str(self.data_dir),
             "closed_candle_analysis":True,
             "live_price_separate":True,
+            "custom_bars_closed_only":True,
+            "regime_research_only":True,
         }
 
         st={
@@ -111,9 +119,13 @@ class Engine:
             "ts":now,
             "price":live_price,
             "analysis":analysis,
+            "market_regime":market_regime,
             "bitcoin_context":btc_context,
             "decision":decision,
             "pnl":paper_pnl,
+            "open_positions":open_positions,
+            "unrealized":unrealized,
+            "risk_guard":risk_guard,
             "lane_stats":lane_stats,
             "recent_trades":recent_trades,
             "research":research_stats,

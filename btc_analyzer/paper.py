@@ -21,6 +21,9 @@ class PaperLedger:
         self.tz_offset=int(cfg.get("report_timezone_offset_hours",3))
         self.cooldowns=cfg.get("lane_cooldowns_seconds",{})
         self.expiries=cfg.get("lane_expiry_seconds",{})
+        self.daily_loss_limit_pct=float(cfg.get("paper_daily_loss_limit_pct",3.0))
+        self.max_consecutive_losses=int(cfg.get("paper_max_consecutive_losses",4))
+        self.max_open_trades=int(cfg.get("paper_max_open_trades",3))
         self._init()
 
     def con(self):
@@ -73,8 +76,48 @@ class PaperLedger:
         c.close()
         return self.start_balance + float(row["pnl"] or 0)
 
+    def risk_guard(self):
+        day=self._summary(self._period_start("day"))
+        c=self.con()
+        open_count=int(c.execute("SELECT COUNT(*) n FROM trades WHERE status='OPEN'").fetchone()["n"] or 0)
+        recent=c.execute("""
+          SELECT net_pnl FROM trades
+          WHERE status!='OPEN'
+          ORDER BY close_ts DESC LIMIT ?
+        """,(self.max_consecutive_losses,)).fetchall()
+        c.close()
+
+        consecutive_losses=0
+        for r in recent:
+            if float(r["net_pnl"] or 0)<0:
+                consecutive_losses+=1
+            else:
+                break
+
+        daily_limit_usd=self.start_balance*self.daily_loss_limit_pct/100.0
+        reasons=[]
+        if day["net_pnl"]<=-daily_limit_usd:
+            reasons.append("DAILY_LOSS_LIMIT")
+        if consecutive_losses>=self.max_consecutive_losses:
+            reasons.append("CONSECUTIVE_LOSS_LIMIT")
+        if open_count>=self.max_open_trades:
+            reasons.append("MAX_OPEN_TRADES")
+
+        return {
+            "allow_new_trades":not reasons,
+            "reasons":reasons,
+            "daily_loss_limit_usd":daily_limit_usd,
+            "daily_net_pnl":day["net_pnl"],
+            "consecutive_losses":consecutive_losses,
+            "max_consecutive_losses":self.max_consecutive_losses,
+            "open_trades":open_count,
+            "max_open_trades":self.max_open_trades,
+        }
+
     def maybe_open(self,lanes,now=None):
         now=now or time.time()
+        if not self.risk_guard()["allow_new_trades"]:
+            return
         c=self.con()
         bal=max(.01,self.balance())
         for lane,s in lanes.items():
@@ -119,7 +162,7 @@ class PaperLedger:
                 fees,reason
               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,(
-                "V2.0",lane,side,now,entry,sl,tp1,tp2,
+                "V2.1",lane,side,now,entry,sl,tp1,tp2,
                 qty,risk_usd,notional,s.get("setup_grade"),safe(s.get("setup_score")),
                 entry_fee,"MAIN_LANE_SIGNAL"
             ))
@@ -280,6 +323,54 @@ class PaperLedger:
             }
         c.close()
         return out
+
+    def open_positions(self,live_price):
+        c=self.con()
+        rows=c.execute("SELECT * FROM trades WHERE status='OPEN' ORDER BY open_ts ASC").fetchall()
+        c.close()
+        out=[]
+        now=time.time()
+        live=float(live_price) if live_price is not None else 0.0
+
+        for r in rows:
+            entry=float(r["entry"])
+            qty=float(r["quantity"])
+            tp1_hit=bool(r["tp1_hit"])
+            remaining=qty*(.5 if tp1_hit else 1.0)
+            partial=float(r["partial_gross"] or 0)
+
+            move=(live-entry) if r["side"]=="LONG" else (entry-live)
+            unrealized=partial + move*remaining
+            current_r=unrealized/max(float(r["risk_usd"]),1e-9)
+
+            def dist(level):
+                level=float(level)
+                if r["side"]=="LONG":
+                    return (level-live)/max(live,1e-9)*100
+                return (live-level)/max(live,1e-9)*100
+
+            out.append({
+                "id":r["id"],"lane":r["lane"],"side":r["side"],
+                "setup_grade":r["setup_grade"],"setup_score":r["setup_score"],
+                "trade_state":"TP1_HIT" if tp1_hit else "OPEN",
+                "entry":entry,"live_price":live,
+                "sl":float(r["sl"]),"tp1":float(r["tp1"]),"tp2":float(r["tp2"]),
+                "unrealized_pnl":unrealized,"current_r":current_r,
+                "age_sec":max(0,now-float(r["open_ts"])),
+                "distance_to_sl_pct":dist(r["sl"]),
+                "distance_to_tp1_pct":dist(r["tp1"]),
+                "distance_to_tp2_pct":dist(r["tp2"]),
+                "tp1_hit":tp1_hit,
+            })
+        return out
+
+    def unrealized_summary(self,live_price):
+        rows=self.open_positions(live_price)
+        return {
+            "open_trades":len(rows),
+            "unrealized_pnl":sum(float(x["unrealized_pnl"]) for x in rows),
+            "current_r":sum(float(x["current_r"]) for x in rows),
+        }
 
     def recent(self,limit=30):
         c=self.con()

@@ -18,5 +18,8 @@
     "SCALP": 7200,
     "INTRADAY": 43200,
     "SWING": 259200
-  }
+  },
+  "paper_daily_loss_limit_pct": 3.0,
+  "paper_max_consecutive_losses": 4,
+  "paper_max_open_trades": 3
 }

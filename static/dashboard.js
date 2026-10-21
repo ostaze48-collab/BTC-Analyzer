@@ -45,7 +45,7 @@ function renderPnl(pnl){
 
 function renderLane(lane){
   const p=lane?.plan||{};
-  const why=Object.entries(lane?.why||{}).map(([k,v])=>`${v?'✓':'×'} ${k.replaceAll('_',' ')}`).join(' · ');
+  const why=Object.entries(lane?.why||{}).map(([k,v])=>`<span class="${v?'good':'bad'}">${v?'✓':'×'} ${k.replaceAll('_',' ')}</span>`).join('<br>');
   return `<article class="lane-card">
     <div class="lane-head">
       <div>
@@ -172,6 +172,41 @@ function renderHealth(h,status){
   $('lastError').textContent=h?.last_error||'—';
 }
 
+function ageText(sec){
+  sec=Number(sec||0);
+  if(sec<60) return Math.round(sec)+'s';
+  if(sec<3600) return Math.round(sec/60)+'m';
+  return (sec/3600).toFixed(1)+'h';
+}
+
+function renderOpenTrades(rows,summary){
+  const n=summary?.open_trades||0;
+  const up=Number(summary?.unrealized_pnl||0);
+  $('openTradesSummary').textContent=`${n} · ${money(up)}`;
+  $('openTradesSummary').className='big-stat '+(up>0?'good':up<0?'bad':'neutral');
+  $('openTradesMeta').textContent=`Unrealized only · Current R ${num(summary?.current_r||0,2)}R — لا يدخل في Realized P&L`;
+  $('openTrades').innerHTML=(rows||[]).map(x=>`<tr>
+    <td>${x.lane}</td><td class="${clsDirection(x.side)}">${x.side}</td>
+    <td class="${x.trade_state==='TP1_HIT'?'good':'warn'}">${x.trade_state}</td>
+    <td>${ageText(x.age_sec)}</td><td class="ltr">${num(x.entry)}</td><td class="ltr">${num(x.live_price)}</td>
+    <td class="${x.unrealized_pnl>0?'good':x.unrealized_pnl<0?'bad':'neutral'}">${money(x.unrealized_pnl)}</td>
+    <td>${num(x.current_r,2)}R</td><td>${pct(x.distance_to_sl_pct)}</td>
+    <td>${pct(x.distance_to_tp1_pct)}</td><td>${pct(x.distance_to_tp2_pct)}</td>
+  </tr>`).join('');
+}
+
+function renderRiskGuard(g){
+  const ok=g?.allow_new_trades;
+  $('riskGuard').innerHTML=`<div class="guard-box">
+    <div class="guard-item"><div class="label">New Trades</div><b class="${ok?'good':'bad'}">${ok?'ALLOWED':'PAUSED'}</b></div>
+    <div class="guard-item"><div class="label">Open</div><b>${g?.open_trades||0}/${g?.max_open_trades||0}</b></div>
+    <div class="guard-item"><div class="label">Daily Net</div><b class="${(g?.daily_net_pnl||0)>=0?'good':'bad'}">${money(g?.daily_net_pnl||0)}</b></div>
+    <div class="guard-item"><div class="label">Loss Limit</div><b>${money(g?.daily_loss_limit_usd||0)}</b></div>
+    <div class="guard-item"><div class="label">Consecutive Losses</div><b>${g?.consecutive_losses||0}/${g?.max_consecutive_losses||0}</b></div>
+    <div class="guard-item"><div class="label">Reason</div><b class="warn">${(g?.reasons||[]).join(', ')||'—'}</b></div>
+  </div>`;
+}
+
 async function refresh(){
   try{
     const s=await (await fetch('/api/state',{cache:'no-store'})).json();
@@ -203,7 +238,13 @@ async function refresh(){
     $('balance').textContent=money(s.pnl?.balance);
     $('pnlTimezone').textContent='P&L timezone '+(s.pnl?.timezone||'—');
 
+    $('marketRegime').textContent=s.market_regime?.regime||'—';
+    $('marketRegime').className='hero-value '+(s.market_regime?.regime==='TREND'?'good':s.market_regime?.regime==='HIGH_VOL'?'bad':'warn');
+    $('marketRegimeMeta').textContent=`Confidence ${num(s.market_regime?.confidence,0)} · Research only`;
+
     renderPnl(s.pnl);
+    renderOpenTrades(s.open_positions,s.unrealized);
+    renderRiskGuard(s.risk_guard);
     $('lanes').innerHTML=['SCALP','INTRADAY','SWING'].map(k=>renderLane(s.decision?.lanes?.[k])).join('');
     renderContext(s.bitcoin_context);
     renderRecentTrades(s.recent_trades);

@@ -21,7 +21,7 @@ h1{margin:0;font-size:22px}h1 span{color:var(--blue)}
 .panel{display:none}.panel.active{display:block}
 .banner{padding:10px 12px;border-radius:11px;margin-bottom:10px;background:#2a2110;border:1px solid #5a4721;color:var(--yellow)}
 .hidden{display:none}
-.hero-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}
+.hero-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:9px}
 .card,.lane-card,.pnl-card{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:14px;padding:12px;box-shadow:var(--shadow)}
 .hero-value{font-size:27px;font-weight:800;margin:6px 0}
 .label,.minor{font-size:11px;color:var(--muted)}
@@ -57,3 +57,5 @@ th{color:var(--muted);font-weight:600;position:sticky;top:0;background:var(--pan
 pre{white-space:pre-wrap;color:var(--muted);font-size:11px}
 @media(max-width:1000px){.hero-grid,.pnl-grid{grid-template-columns:repeat(2,1fr)}.lane-grid{grid-template-columns:1fr}.health-grid{grid-template-columns:repeat(2,1fr)}.fresh-grid{grid-template-columns:repeat(4,1fr)}}
 @media(max-width:650px){.shell{padding:8px}.hero-grid,.pnl-grid,.two-col{grid-template-columns:1fr}.health-grid{grid-template-columns:1fr 1fr}.fresh-grid{grid-template-columns:repeat(3,1fr)}.hero-value{font-size:23px}.plan-grid{grid-template-columns:repeat(2,1fr)}}
+
+.guard-box{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}.guard-item{background:#07131e;border:1px solid var(--line);border-radius:8px;padding:7px}
