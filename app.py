@@ -1,23 +1,46 @@
 from __future__ import annotations
 import json, os, threading
 from pathlib import Path
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, Response
 from engine import Engine
 
-ROOT=Path(__file__).resolve().parent
-CFG=json.loads((ROOT/"config.json").read_text(encoding="utf-8"))
-app=Flask(__name__)
-engine=Engine(ROOT,CFG)
-threading.Thread(target=engine.run,daemon=True).start()
+ROOT = Path(__file__).resolve().parent
+CFG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+
+app = Flask(__name__)
+engine = Engine(ROOT, CFG)
+threading.Thread(target=engine.run, daemon=True).start()
+
+DASHBOARD_HTML = '<!doctype html><html lang="ar" dir="rtl"><head>\n<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">\n<title>BTC Analyzer V1</title>\n<style>\n:root{--bg:#071019;--p:#0d1824;--p2:#101e2c;--line:#203246;--txt:#eff6ff;--muted:#8da3b8;--g:#2bd99f;--r:#ff657d;--y:#ffc85c;--b:#62a9ff}\n*{box-sizing:border-box}body{margin:0;background:linear-gradient(150deg,#071019,#091725 60%,#071019);color:var(--txt);font-family:Tahoma,Arial,sans-serif}.w{max-width:1500px;margin:auto;padding:14px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}.brand h1{font-size:20px;margin:0}.sub{font-size:12px;color:var(--muted);margin-top:5px}.pill{padding:7px 10px;border:1px solid var(--line);border-radius:999px;background:var(--p);font-size:12px}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:10px}.c{background:linear-gradient(180deg,var(--p2),var(--p));border:1px solid var(--line);border-radius:15px;padding:13px}.s12{grid-column:span 12}.s8{grid-column:span 8}.s6{grid-column:span 6}.s4{grid-column:span 4}.s3{grid-column:span 3}.lab{font-size:11px;color:var(--muted)}.v{font-size:27px;font-weight:800;margin-top:5px}.g{color:var(--g)}.r{color:var(--r)}.y{color:var(--y)}.row{display:flex;justify-content:space-between;align-items:center;gap:10px}.title{font-weight:700;margin-bottom:10px}.tfgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:7px}.tf{padding:8px;border:1px solid var(--line);border-radius:10px;background:#091521;text-align:center}.tf .x{font-weight:700;margin:4px 0}.families{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}.fam{padding:10px;border:1px solid var(--line);border-radius:11px;background:#091521}.bar{height:7px;background:#06101a;border-radius:10px;overflow:hidden;margin-top:7px}.fill{height:100%;background:var(--b)}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}.tw{overflow:auto;max-height:350px}.tag{padding:4px 7px;border-radius:7px;background:#14283b;font-size:11px}.plan{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.metric{padding:10px;border:1px solid var(--line);border-radius:11px;background:#091521}.ltr{direction:ltr;text-align:center}.note{font-size:11px;color:var(--muted);line-height:1.7}\n@media(max-width:900px){.s8,.s6,.s4,.s3{grid-column:span 12}.families{grid-template-columns:repeat(3,1fr)}.tfgrid{grid-template-columns:repeat(3,1fr)}}@media(max-width:520px){.families,.tfgrid,.plan{grid-template-columns:repeat(2,1fr)}.w{padding:9px}}\n</style></head><body><div class="w">\n<div class="top"><div class="brand"><h1>BTC Analyzer V1</h1><div class="sub">Multi-Timeframe · Wave Structure · Confirmation · Veto · Paper Tracking</div></div><div><span class="pill" id="status">...</span> <span class="pill">تحليل فقط — لا تداول حقيقي</span></div></div>\n<div class="grid">\n<div class="c s3"><div class="lab">BTC/USDT</div><div class="v ltr" id="price">—</div><div class="lab">السعر الحالي</div></div>\n<div class="c s3"><div class="lab">Market Bias</div><div class="v" id="bias">—</div><div class="lab" id="biasScore">—</div></div>\n<div class="c s3"><div class="lab">Signal</div><div class="v" id="action">—</div><div class="lab" id="quality">—</div></div>\n<div class="c s3"><div class="lab">Virtual Balance</div><div class="v ltr" id="balance">$100.00</div><div class="lab" id="paperStats">—</div></div>\n\n<div class="c s8"><div class="title">خريطة جميع الفريمات</div><div class="tfgrid" id="tfgrid"></div></div>\n<div class="c s4"><div class="title">Timeframe Hierarchy</div><div id="hierarchy"></div><div class="note" style="margin-top:10px">الفريمات الكبيرة تحدد السياق، والفريمات الصغيرة تحدد التوقيت. التصحيح الصغير لا يلغي الاتجاه الكبير تلقائيًا.</div></div>\n\n<div class="c s6"><div class="title">Independent Confirmations</div><div class="families" id="families"></div></div>\n<div class="c s6"><div class="title">Veto Engine</div><div id="veto"></div><div class="note" style="margin-top:10px">أي تعارض مهم أو تمدد سعري أو تقلب غير مناسب يستطيع إلغاء الصفقة حتى لو كان الاتجاه العام واضحًا.</div></div>\n\n<div class="c s12"><div class="title">Trade Plan — افتراضي</div><div class="plan">\n<div class="metric"><div class="lab">Entry</div><div class="v ltr" style="font-size:19px" id="entry">—</div></div>\n<div class="metric"><div class="lab">Stop / Invalidation</div><div class="v ltr" style="font-size:19px" id="sl">—</div></div>\n<div class="metric"><div class="lab">TP1 · 1.5R</div><div class="v ltr" style="font-size:19px" id="tp1">—</div></div>\n<div class="metric"><div class="lab">TP2 · 2.5R</div><div class="v ltr" style="font-size:19px" id="tp2">—</div></div>\n</div></div>\n\n<div class="c s6"><div class="title">Wave Map</div><div class="tw"><table><thead><tr><th>TF</th><th>Structure</th><th>Wave</th><th>Type</th><th>State</th><th>Change</th></tr></thead><tbody id="waves"></tbody></table></div></div>\n<div class="c s6"><div class="title">Paper Signals</div><div class="tw"><table><thead><tr><th>Side</th><th>Quality</th><th>Entry</th><th>Status</th><th>R</th></tr></thead><tbody id="signals"></tbody></table></div></div>\n</div></div>\n<script>\nconst $=id=>document.getElementById(id), fmt=(x,d=2)=>x==null?\'—\':Number(x).toLocaleString(\'en-US\',{minimumFractionDigits:d,maximumFractionDigits:d});\nfunction clsDir(x){return x===\'BULLISH\'||x===\'LONG\'||x===\'UP\'?\'g\':x===\'BEARISH\'||x===\'SHORT\'||x===\'DOWN\'?\'r\':\'y\'}\nfunction scoreLine(name,x){let n=Number(x||0);return `<div class="metric" style="margin-bottom:7px"><div class="row"><span class="lab">${name}</span><b class="${n>0.15?\'g\':n<-0.15?\'r\':\'y\'}">${(n*100).toFixed(0)}</b></div><div class="bar"><div class="fill" style="width:${Math.min(100,Math.abs(n)*100)}%"></div></div></div>`}\nasync function refresh(){\n let s=await (await fetch(\'/api/state\')).json(); $(\'status\').textContent=s.status||\'...\';\n if(s.status!==\'OK\')return;\n $(\'price\').textContent=\'$\'+fmt(s.price,2);$(\'bias\').textContent=s.bias;$(\'bias\').className=\'v \'+clsDir(s.bias);$(\'biasScore\').textContent=\'Score \'+(s.bias_score*100).toFixed(0);\n $(\'action\').textContent=s.action;$(\'action\').className=\'v \'+clsDir(s.action);$(\'quality\').textContent=\'Quality \'+s.quality+\' · \'+Number(s.quality_score).toFixed(0)+\'/100\';\n $(\'balance\').textContent=\'$\'+fmt(s.paper?.virtual_balance,2);$(\'paperStats\').textContent=`W ${s.paper?.wins||0} / L ${s.paper?.losses||0} · WR ${Number(s.paper?.win_rate||0).toFixed(1)}%`;\n const order=[\'1Y\',\'6M\',\'3M\',\'1M\',\'2W\',\'12D\',\'1W\',\'3D\',\'1D\',\'12H\',\'8H\',\'6H\',\'4H\',\'2H\',\'1H\',\'30m\',\'15m\',\'5m\',\'3m\',\'1m\'];\n $(\'tfgrid\').innerHTML=order.filter(tf=>s.timeframes?.[tf]).map(tf=>{let a=s.timeframes[tf];return `<div class="tf"><div class="lab">${tf}</div><div class="x ${clsDir(a.trend)}">${a.trend}</div><div class="lab">${a.structure}</div><div class="lab">${a.wave_direction} · ${a.wave_state}</div></div>`}).join(\'\');\n $(\'hierarchy\').innerHTML=Object.entries(s.hierarchy||{}).map(([k,v])=>scoreLine(k,v)).join(\'\');\n $(\'families\').innerHTML=Object.entries(s.families||{}).map(([k,v])=>`<div class="fam"><div class="lab">${k}</div><div class="row"><b>${(Number(v)*100).toFixed(0)}</b><span class="tag">${s.confirmations?.[k]||\'\'}</span></div></div>`).join(\'\');\n $(\'veto\').innerHTML=(s.veto&&s.veto.length)?s.veto.map(x=>`<div class="tag r" style="margin:5px;display:inline-block">${x}</div>`).join(\'\'):`<div class="g">✓ لا يوجد Veto حاليًا</div>`;\n let p=s.plan||{};$(\'entry\').textContent=fmt(p.entry,2);$(\'sl\').textContent=fmt(p.sl,2);$(\'tp1\').textContent=fmt(p.tp1,2);$(\'tp2\').textContent=fmt(p.tp2,2);\n $(\'waves\').innerHTML=order.filter(tf=>s.timeframes?.[tf]).map(tf=>{let a=s.timeframes[tf];return `<tr><td>${tf}</td><td class="${clsDir(a.structure)}">${a.structure}</td><td class="${clsDir(a.wave_direction)}">${a.wave_direction}</td><td>${a.wave_type}</td><td>${a.wave_state}</td><td class="ltr">${Number(a.wave_change_pct).toFixed(2)}%</td></tr>`}).join(\'\');\n $(\'signals\').innerHTML=(s.paper?.recent||[]).map(x=>`<tr><td class="${x.side===\'LONG\'?\'g\':\'r\'}">${x.side}</td><td>${x.quality}</td><td class="ltr">${fmt(x.entry,2)}</td><td>${x.status}</td><td class="ltr">${Number(x.result_r||0).toFixed(1)}R</td></tr>`).join(\'\');\n}\nrefresh();setInterval(refresh,30000);\n</script></body></html>'
 
 @app.get("/")
-def home(): return render_template("index.html")
+def home():
+    return Response(DASHBOARD_HTML, mimetype="text/html; charset=utf-8")
+
 @app.get("/health")
 def health():
-    s=engine.snapshot()
-    return jsonify({"ok":s.get("status")!="ERROR","status":s.get("status")})
-@app.get("/api/state")
-def state(): return jsonify(engine.snapshot())
+    s = engine.snapshot()
+    return jsonify({
+        "ok": s.get("status") != "ERROR",
+        "status": s.get("status"),
+        "error": s.get("error")
+    })
 
-if __name__=="__main__":
-    app.run(host="0.0.0.0",port=int(os.environ.get("PORT","10000")),threaded=True)
+@app.get("/api/state")
+def state():
+    return jsonify(engine.snapshot())
+
+@app.get("/diag")
+def diag():
+    s = engine.snapshot()
+    return jsonify({
+        "app": "BTC Analyzer V1.1",
+        "ui_embedded": True,
+        "status": s.get("status"),
+        "error": s.get("error"),
+        "has_price": s.get("price") is not None if isinstance(s, dict) else False,
+        "timeframe_count": len(s.get("timeframes", {})) if isinstance(s, dict) else 0
+    })
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "10000")), threaded=True)
