@@ -39,7 +39,7 @@ def health():
 def diag():
     s=engine.snapshot()
     return jsonify({
-        "app":"BTC Analyzer V2.1",
+        "app":"BTC Analyzer V2.2",
         "status":s.get("status"),
         "price":s.get("price"),
         "best_setup":(s.get("decision") or {}).get("best_setup"),

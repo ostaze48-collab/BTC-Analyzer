@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>BTC Analyzer V2.0</title>
+<title>BTC Analyzer V2.2</title>
 <link rel="stylesheet" href="/static/dashboard.css">
 </head>
 <body>
 <div class="shell">
   <header class="topbar">
     <div>
-      <h1>BTC Analyzer <span>V2.1</span></h1>
+      <h1>BTC Analyzer <span>V2.2</span></h1>
       <div class="subtitle">Quality First · Closed-Candle Analysis · Scalp / Intraday / Swing · Research & Paper P&amp;L</div>
     </div>
     <div class="topmeta">
@@ -72,7 +72,7 @@
           <div id="contextBox"></div>
         </article>
         <article class="card">
-          <div class="card-title">منهجية V2.1</div>
+          <div class="card-title">منهجية V2.2</div>
           <div class="principles">
             <div>✓ التحليل الفني يستخدم الشموع المغلقة فقط.</div>
             <div>✓ السعر الحي يستخدم للتنفيذ الافتراضي فقط.</div>
@@ -98,7 +98,7 @@
       <article class="card">
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Lane</th><th>Side</th><th>State</th><th>Age</th><th>Entry</th><th>Live</th><th>Unrealized</th><th>Current R</th><th>To SL</th><th>To TP1</th><th>To TP2</th></tr></thead>
+            <thead><tr><th>Opportunity</th><th>Lane</th><th>Side</th><th>State</th><th>Age</th><th>Entry</th><th>Live</th><th>Unrealized</th><th>Current R</th><th>MFE</th><th>MAE</th><th>To SL</th><th>To TP1</th><th>To TP2</th></tr></thead>
             <tbody id="openTrades"></tbody>
           </table>
         </div>
@@ -108,7 +108,7 @@
         <div class="card-title">آخر الصفقات الافتراضية الرئيسية</div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Lane</th><th>Side</th><th>Grade</th><th>Entry</th><th>Status</th><th>Net P&amp;L</th><th>R</th></tr></thead>
+            <thead><tr><th>Opportunity</th><th>Lane</th><th>Regime</th><th>Side</th><th>Grade</th><th>Entry Timing</th><th>Chasing</th><th>Entry</th><th>Status</th><th>Net P&amp;L</th><th>R</th><th>MFE</th><th>MAE</th><th>Efficiency</th></tr></thead>
             <tbody id="recentTrades"></tbody>
           </table>
         </div>
@@ -178,10 +178,53 @@
         </article>
       </div>
       <article class="card">
+        <div class="card-title">Performance by Market Regime</div>
+        <div class="minor">هذه نتائج الصفقات الرئيسية المغلقة، وليست مجرد Snapshots.</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Lane</th><th>Regime</th><th>Trades</th><th>W/L</th><th>WR</th><th>Net</th><th>Avg R</th><th>Avg MFE</th><th>Avg MAE</th><th>Capture %</th></tr></thead>
+            <tbody id="regimePerformance"></tbody>
+          </table>
+        </div>
+      </article>
+
+      <div class="two-col">
+        <article class="card">
+          <div class="card-title">Entry Timing Calibration</div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Timing</th><th>Trades</th><th>W/L</th><th>WR</th><th>Avg R</th><th>Capture %</th></tr></thead>
+              <tbody id="entryTimingCalibration"></tbody>
+            </table>
+          </div>
+        </article>
+        <article class="card">
+          <div class="card-title">Chasing Risk Calibration</div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Risk</th><th>Trades</th><th>W/L</th><th>WR</th><th>Avg R</th><th>Capture %</th></tr></thead>
+              <tbody id="chasingCalibration"></tbody>
+            </table>
+          </div>
+        </article>
+      </div>
+
+      <article class="card">
+        <div class="card-title">Opportunity Timeline</div>
+        <div class="minor">كل Opportunity ID يمثل فرصة واحدة حتى لو تم تحليلها عشرات المرات.</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Opportunity</th><th>Lane</th><th>Side</th><th>State</th><th>Score</th><th>Action</th><th>Note</th></tr></thead>
+            <tbody id="opportunityEvents"></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="card">
         <div class="card-title">Recent Research Snapshots</div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Bias</th><th>Best Lane</th><th>Action</th><th>Grade</th><th>Score</th><th>Context</th><th>1H</th><th>4H</th></tr></thead>
+            <thead><tr><th>Opportunity</th><th>Bias</th><th>Market Regime</th><th>Best Lane</th><th>Action</th><th>Grade</th><th>Score</th><th>Timing</th><th>Chasing</th><th>R:R</th><th>1H</th><th>4H</th></tr></thead>
             <tbody id="researchRecent"></tbody>
           </table>
         </div>

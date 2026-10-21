@@ -11,9 +11,10 @@ from btc_analyzer.decision import DecisionEngine
 from btc_analyzer.paper import PaperLedger
 from btc_analyzer.research import ResearchJournal, ShadowLab
 from btc_analyzer.regime import MarketRegimeEngine
+from btc_analyzer.opportunity import OpportunityTracker
 
 class Engine:
-    VERSION="V2.1"
+    VERSION="V2.2"
 
     def __init__(self,root:Path,cfg:dict):
         self.root=root
@@ -35,6 +36,7 @@ class Engine:
             cfg.get("research_snapshot_seconds",300)
         )
         self.shadow=ShadowLab(self.data_dir/"shadow_v2.db")
+        self.opportunities=OpportunityTracker(self.data_dir/"opportunities_v2.db")
 
         self.state={"status":"STARTING","engine_version":self.VERSION}
         self.last_good=None
@@ -74,22 +76,41 @@ class Engine:
 
         decision=self.decision.evaluate(analysis,btc_context,live_price)
 
-        # New virtual trades are opened AFTER processing the last closed bar,
-        # so that bar can never hit a trade that did not yet exist.
-        self.paper.maybe_open(decision["lanes"])
+        # Stable opportunity IDs prevent repeated engine cycles from being
+        # misread as independent setups.
+        active_opportunities=self.opportunities.observe(decision["lanes"])
+        for lane_name,lane in decision["lanes"].items():
+            lane["opportunity"]=active_opportunities.get(lane_name)
+        actionable=[x for x in decision["lanes"].values() if x.get("action") in ("LONG","SHORT")]
+        decision["best_setup"]=max(
+            actionable or list(decision["lanes"].values()),
+            key=lambda x:x.get("setup_score",0)
+        )
+
+        # New virtual trades are opened AFTER processing the last closed bar.
+        self.paper.maybe_open(
+            decision["lanes"],
+            market_regime=market_regime.get("regime")
+        )
         self.shadow.observe(decision["shadow"])
 
         self.research.update_outcomes(live_price)
-        self.research.snapshot(live_price,analysis,decision,btc_context)
+        self.research.snapshot(
+            live_price,analysis,decision,btc_context,market_regime
+        )
 
         paper_pnl=self.paper.pnl_dashboard()
         open_positions=self.paper.open_positions(live_price)
         unrealized=self.paper.unrealized_summary(live_price)
         risk_guard=self.paper.risk_guard()
         lane_stats=self.paper.lane_stats()
+        regime_performance=self.paper.regime_stats()
+        calibration_stats=self.paper.calibration_stats()
         recent_trades=self.paper.recent()
         research_stats=self.research.stats()
         shadow_stats=self.shadow.stats()
+        recent_opportunities=self.opportunities.recent()
+        opportunity_events=self.opportunities.recent_events()
 
         now=time.time()
         health={
@@ -127,7 +148,12 @@ class Engine:
             "unrealized":unrealized,
             "risk_guard":risk_guard,
             "lane_stats":lane_stats,
+            "regime_performance":regime_performance,
+            "calibration_stats":calibration_stats,
             "recent_trades":recent_trades,
+            "active_opportunities":active_opportunities,
+            "recent_opportunities":recent_opportunities,
+            "opportunity_events":opportunity_events,
             "research":research_stats,
             "shadow_compare":shadow_stats,
             "health":health,

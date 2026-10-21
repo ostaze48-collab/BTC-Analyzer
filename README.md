@@ -1,158 +1,100 @@
-# BTC Analyzer V2.1 — Quality & Measurement Release
+# BTC Analyzer V2.2 — Calibration & Trade Quality
 
-V2.0 freezes indicator expansion and focuses on:
-1. data quality,
-2. decision methodology,
-3. result measurement,
-4. interface clarity.
+V2.2 continues the current rule: do not add new indicators unless the data proves they add value.
+This release focuses on calibration, opportunity lifecycle and execution-quality measurement.
 
-## Main methodological changes
+## Stable Opportunity IDs
+Each evolving SCALP / INTRADAY / SWING setup gets one persistent ID instead of being counted again every engine cycle.
 
-### Closed-candle analysis
-All timeframe analysis uses closed candles only.
-The live BTC price is fetched separately and is used for the virtual execution layer.
+Lifecycle:
+- FORMING
+- READY
+- TRIGGERED
+- CLOSED
 
-This reduces repainting from a still-forming 1H/4H/1D candle.
+## Stricter A+
+SCALP A+ is capped to A when 15m support or 3m confirmation is missing.
+The trade may still be allowed at A if the remaining Quality-First rules pass.
 
-Custom 12D and 2W candles are also kept out of analysis until their full daily bucket is complete.
+## Clearer terminology
+- Setup Score is not a probability.
+- LONG Direction Score / SHORT Direction Score are directional scores, not probabilities.
+- Regime Strength replaces the misleading word Confidence in the UI.
 
-### Macro de-duplication
-1Y / 6M / 3M are rolling daily contexts and are highly correlated.
-V2.0 median-combines them into one macro-context vote instead of counting them as three independent votes.
+## Entry Quality Diagnostics
+Every lane now reports:
+- Entry Timing: EARLY / OPTIMAL / ACCEPTABLE / LATE
+- Chasing Risk: LOW / MEDIUM / HIGH
+- Available R:R
+- R:R Gate PASS / BLOCK
+- structural obstacle when available from existing support/resistance
 
-### One decision orchestrator
-The analyzer produces market facts.
-The Decision Engine alone creates SCALP / INTRADAY / SWING decisions.
+No new indicator is used for these diagnostics.
 
-`Setup Score` is a rule-based score, not a claimed success probability.
+## R:R Gate
+Minimum available structural R:R:
+- SCALP: 1.20R
+- INTRADAY: 1.40R
+- SWING: 1.60R
 
-## Main paper P&L account
+A setup remains WAIT if available R:R is below its lane threshold.
 
-Only the primary virtual trades from:
-- SCALP
-- INTRADAY
-- SWING
+## Chasing protection
+HIGH chasing risk keeps the lane at WAIT.
+This uses the existing wave state and overextension flag.
 
-are included in Total P&L.
+## MFE / MAE
+Primary paper trades now track:
+- MFE price / MFE in R
+- MAE price / MAE in R
 
-Shadow A/B/C/D trades are research-only and do NOT increase or reduce the account total.
+## Capture Efficiency
+Closed trades calculate positive realized R / MFE R, capped at 0–100%.
 
-The Dashboard reports realized:
-- Today
-- This week
-- This month
-- Total
+## Performance by Market Regime
+Actual closed primary trades are grouped by lane + market regime with:
+- trades
+- W/L and win rate
+- net P&L
+- Avg R
+- Avg MFE / MAE
+- Capture Efficiency
 
-Each period includes:
-- Gross Profit
-- Gross Loss
-- Fees
-- Net P&L
-- Total R
-- W/L
-- Win Rate
+Market Regime remains research-only in V2.2.
 
-Default reporting timezone is UTC+3 and can be changed in `config.json`.
+## Calibration tables
+Research compares actual closed trades by:
+- Entry Timing
+- Chasing Risk
 
-### Partial-exit simulation
-Main virtual trades use:
-- 50% at TP1
-- remaining 50% toward TP2
-- original stop remains active
+## Non-destructive database migration
+V2.2 keeps:
+- paper_v2.db
+- research_v2.db
+- shadow_v2.db
 
-If Stop and Target are both touched in the same closed 1m candle,
-V2.0 uses the conservative assumption: Stop happened first.
+and adds:
+- opportunities_v2.db
 
-Paper fees and slippage are configurable.
-They default to 0.0 bps so V2.0 does not pretend to know the user's real execution costs.
+Missing V2.2 columns are added automatically to existing V2.0/V2.1 databases.
+Historical trades are not deleted.
 
-## Better Shadow comparison
+New migrated fields include:
+- opportunity_id
+- market_regime
+- entry_timing
+- chasing_risk
+- available_rr
+- structural_obstacle
+- MFE / MAE
+- capture efficiency
 
-The Scalp A/B/C/D laboratory now separates:
-- Missed Winner
-- Avoided Loser
-- Neutral Miss
+Old historical rows may show blank/UNKNOWN for fields that did not exist when recorded.
 
-This is more useful than treating every missing strict trigger as a "missed opportunity".
+## Render persistence
+Keep a Persistent Disk mounted at /var/data and:
 
-## Resilience
+DATA_DIR=/var/data
 
-If a new cycle fails after the system has already produced a good state:
-- the Dashboard stays alive,
-- the last successful analysis remains visible,
-- status becomes `DEGRADED`,
-- System Health shows the current error and age of the last successful cycle.
-
-## Data request caching
-
-Long timeframes are not downloaded every engine cycle.
-Each timeframe has a different refresh TTL.
-
-## Interface
-
-Tabs:
-- الرئيسية
-- الفريمات
-- Scalp Lab
-- Research
-- System Health
-
-The Overview puts realized P&L and the three decision lanes first.
-
-## Files
-
-- `btc_analyzer/data.py` — Binance public data, caching, closed candles
-- `btc_analyzer/analysis.py` — technical and wave analysis
-- `btc_analyzer/context.py` — Bitcoin Context / optional Bitbo
-- `btc_analyzer/decision.py` — SCALP / INTRADAY / SWING
-- `btc_analyzer/paper.py` — primary account, P&L accounting
-- `btc_analyzer/research.py` — snapshots and Shadow comparison
-- `engine.py` — orchestration and Last-Good-State
-- `static/` — separate Dashboard HTML/CSS/JS
-
-## Render
-
-Upload all V2.0 files to the repository, then:
-
-Manual Deploy -> Clear build cache & deploy
-
-For persistent research/P&L data, mount a Render Persistent Disk at:
-
-`/var/data`
-
-and add:
-
-`DATA_DIR=/var/data`
-
-Optional Bitbo:
-
-`BITBO_API_KEY=...`
-
-Never commit the Bitbo key to GitHub.
-
-## New database files
-
-V2.0 intentionally uses new databases:
-- `paper_v2.db`
-- `research_v2.db`
-- `shadow_v2.db`
-
-This prevents old V1 research methodology from being silently mixed with V2.0 results.
-
-Old databases are not deleted.
-
-## Important
-
-This is a research and paper-trading system.
-It does not send real orders.
-No indicator or score guarantees profit.
-
-
-## V2.1 additions
-
-- Open Trades panel with OPEN / TP1_HIT, age, unrealized P&L, Current R and distances to SL/TP1/TP2.
-- Unrealized P&L is separate from realized day/week/month/total P&L.
-- Paper Risk Guard: daily loss limit, consecutive-loss pause and maximum open trades.
-- Market Regime classifier: TREND / PULLBACK / RANGE / COMPRESSION / EXHAUSTION / REVERSAL_CANDIDATE / HIGH_VOL / MIXED.
-- Market Regime is research/display-only in V2.1 and does not alter paper decisions.
-- V2.0 already used full-bucket validation for custom 12D/2W candles; V2.1 retains that closed-bar protection.
+## Paper / Research only
+V2.2 sends no real orders and does not guarantee profit.

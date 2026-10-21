@@ -59,3 +59,9 @@ pre{white-space:pre-wrap;color:var(--muted);font-size:11px}
 @media(max-width:650px){.shell{padding:8px}.hero-grid,.pnl-grid,.two-col{grid-template-columns:1fr}.health-grid{grid-template-columns:1fr 1fr}.fresh-grid{grid-template-columns:repeat(3,1fr)}.hero-value{font-size:23px}.plan-grid{grid-template-columns:repeat(2,1fr)}}
 
 .guard-box{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}.guard-item{background:#07131e;border:1px solid var(--line);border-radius:8px;padding:7px}
+
+.opportunity-strip{display:flex;justify-content:space-between;gap:7px;align-items:center;flex-wrap:wrap;margin-top:8px;padding:7px;background:#07131e;border:1px solid var(--line);border-radius:8px;font-size:10px}
+.opportunity-strip code,td code{direction:ltr;color:var(--blue);font-size:10px}
+.diagnostic-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-top:8px}
+.diag{background:#07131e;border:1px solid var(--line);border-radius:8px;padding:7px;text-align:center}
+@media(max-width:650px){.diagnostic-grid{grid-template-columns:repeat(2,1fr)}}

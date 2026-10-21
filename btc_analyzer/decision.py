@@ -2,6 +2,8 @@ from __future__ import annotations
 from .core import clamp, safe
 
 class DecisionEngine:
+    MIN_RR={"SCALP":1.20,"INTRADAY":1.40,"SWING":1.60}
+
     def _dir_value(self,a):
         if not a:
             return 0.0
@@ -10,8 +12,7 @@ class DecisionEngine:
         return clamp(
             safe(a.get("trend_score"))*.45 +
             safe(a.get("momentum_score"))*.20 +
-            struct*.20 +
-            wave*.15
+            struct*.20 + wave*.15
         )
 
     def _context(self,T,names,weights):
@@ -28,7 +29,7 @@ class DecisionEngine:
             return False
         trend_ok=safe(a.get("trend_score"))*d>=min_trend
         if not require_wave:
-            return trend_ok
+            return bool(trend_ok)
         wave_ok=(d>0 and a.get("wave_direction")=="UP") or (d<0 and a.get("wave_direction")=="DOWN")
         return bool(trend_ok and wave_ok)
 
@@ -44,6 +45,11 @@ class DecisionEngine:
     @staticmethod
     def _grade(score):
         return "A+" if score>=85 else "A" if score>=72 else "B" if score>=58 else "C"
+
+    @staticmethod
+    def _cap_grade(grade,cap):
+        order={"C":0,"B":1,"A":2,"A+":3}
+        return grade if order[grade]<=order[cap] else cap
 
     @staticmethod
     def _plan(price,a,d,lane):
@@ -62,6 +68,59 @@ class DecisionEngine:
             sl=price+dist; tp1=price-dist*r1; tp2=price-dist*r2
         return {"entry":price,"sl":sl,"tp1":tp1,"tp2":tp2,"risk_pct":dist/price*100}
 
+    def _diagnostics(self,plan,a,d,lane,triggered):
+        entry=plan.get("entry"); sl=plan.get("sl"); tp2=plan.get("tp2")
+        if any(x is None for x in (entry,sl,tp2)) or not a or not d:
+            return {
+                "entry_timing":"UNKNOWN","chasing_risk":"UNKNOWN",
+                "available_rr":0.0,"rr_gate_pass":False,
+                "structural_obstacle":None
+            }
+
+        entry=float(entry); sl=float(sl); tp2=float(tp2)
+        stop_dist=abs(entry-sl)
+        planned_reward=abs(tp2-entry)
+
+        obstacle=None
+        if d>0:
+            r=a.get("resistance")
+            if r is not None and float(r)>entry:
+                obstacle=float(r)
+        else:
+            s=a.get("support")
+            if s is not None and float(s)<entry:
+                obstacle=float(s)
+
+        available_reward=planned_reward
+        if obstacle is not None:
+            available_reward=min(available_reward,abs(obstacle-entry))
+
+        rr=available_reward/max(stop_dist,1e-9)
+
+        if bool(a.get("overextended")) or a.get("wave_state")=="EXHAUSTING":
+            chasing="HIGH"
+        elif a.get("wave_state")=="MATURE":
+            chasing="MEDIUM"
+        else:
+            chasing="LOW"
+
+        if chasing=="HIGH":
+            timing="LATE"
+        elif triggered and a.get("wave_state")=="EXPANDING":
+            timing="OPTIMAL"
+        elif not triggered:
+            timing="EARLY"
+        else:
+            timing="ACCEPTABLE"
+
+        return {
+            "entry_timing":timing,
+            "chasing_risk":chasing,
+            "available_rr":rr,
+            "rr_gate_pass":bool(rr>=self.MIN_RR[lane]),
+            "structural_obstacle":obstacle,
+        }
+
     def evaluate(self,analysis,context,live_price):
         T=analysis.get("timeframes",{})
         global_d=1 if analysis.get("bias")=="BULLISH" else -1 if analysis.get("bias")=="BEARISH" else 0
@@ -70,7 +129,8 @@ class DecisionEngine:
         intra_ctx=self._context(T,["1D","4H","1H","30m"],[.25,.35,.25,.15])
         swing_ctx=self._context(T,["1W","3D","1D","4H"],[.20,.20,.35,.25])
 
-        def d_from(s,t=.18): return 1 if s>=t else -1 if s<=-t else 0
+        def d_from(s,t=.18):
+            return 1 if s>=t else -1 if s<=-t else 0
         ds=d_from(scalp_ctx,.18); di=d_from(intra_ctx,.20); dw=d_from(swing_ctx,.20)
 
         context_score=safe((context or {}).get("score"),0.0)
@@ -107,7 +167,15 @@ class DecisionEngine:
             abs(scalp_ctx)*55+(18 if a5 else 0)+(12 if a1 else 0)+(8 if a3 else 0)+(7 if a15 else 0)
         ))
         scalp_grade=self._grade(scalp_score)
-        scalp_action=("LONG" if ds>0 else "SHORT") if scalp_trigger and scalp_grade in ("A","A+") else "WAIT"
+        # A+ now requires stronger convergence. A trade may still be allowed at A.
+        if not a15 or not a3:
+            scalp_grade=self._cap_grade(scalp_grade,"A")
+        scalp_plan=self._plan(live_price,t5,ds,"SCALP")
+        scalp_diag=self._diagnostics(scalp_plan,t5,ds,"SCALP",scalp_trigger)
+        scalp_action=("LONG" if ds>0 else "SHORT") if (
+            scalp_trigger and scalp_grade in ("A","A+") and
+            scalp_diag["rr_gate_pass"] and scalp_diag["chasing_risk"]!="HIGH"
+        ) else "WAIT"
 
         ia15=self._aligned(t15,di,.12) if di else False
         ia30=self._aligned(t30,di,.12) if di else False
@@ -116,7 +184,14 @@ class DecisionEngine:
         intra_trigger=bool(intra_permission and ia30 and ia15)
         intra_score=max(0,min(100,abs(intra_ctx)*60+(15 if ia1h else 0)+(15 if ia30 else 0)+(10 if ia15 else 0)))
         intra_grade=self._grade(intra_score)
-        intra_action=("LONG" if di>0 else "SHORT") if intra_trigger and intra_grade in ("A","A+") else "WAIT"
+        if not ia1h:
+            intra_grade=self._cap_grade(intra_grade,"A")
+        intra_plan=self._plan(live_price,t15,di,"INTRADAY")
+        intra_diag=self._diagnostics(intra_plan,t15,di,"INTRADAY",intra_trigger)
+        intra_action=("LONG" if di>0 else "SHORT") if (
+            intra_trigger and intra_grade in ("A","A+") and
+            intra_diag["rr_gate_pass"] and intra_diag["chasing_risk"]!="HIGH"
+        ) else "WAIT"
 
         wa1d=self._aligned(t1d,dw,.10) if dw else False
         wa4h=self._aligned(t4h,dw,.12) if dw else False
@@ -124,39 +199,53 @@ class DecisionEngine:
         swing_trigger=bool(swing_permission and wa1d and wa4h)
         swing_score=max(0,min(100,abs(swing_ctx)*68+(17 if wa1d else 0)+(15 if wa4h else 0)))
         swing_grade=self._grade(swing_score)
-        swing_action=("LONG" if dw>0 else "SHORT") if swing_trigger and swing_grade in ("A","A+") else "WAIT"
+        swing_plan=self._plan(live_price,t4h,dw,"SWING")
+        swing_diag=self._diagnostics(swing_plan,t4h,dw,"SWING",swing_trigger)
+        swing_action=("LONG" if dw>0 else "SHORT") if (
+            swing_trigger and swing_grade in ("A","A+") and
+            swing_diag["rr_gate_pass"] and swing_diag["chasing_risk"]!="HIGH"
+        ) else "WAIT"
 
-        def lane(name,d,ctx,action,grade,score,trigger,plan_tf,why):
+        def lane(name,d,ctx,action,grade,score,trigger,plan,diag,why):
             tilt=context_score*15
-            long_perm=max(0,min(100,50+ctx*50+tilt))
-            short_perm=max(0,min(100,50-ctx*50-tilt))
+            long_score=max(0,min(100,50+ctx*50+tilt))
+            short_score=max(0,min(100,50-ctx*50-tilt))
+            why=dict(why)
+            why["rr_gate"]=bool(diag["rr_gate_pass"])
+            why["not_chasing"]=diag["chasing_risk"]!="HIGH"
             return {
                 "lane":name,
                 "side_bias":"LONG" if d>0 else "SHORT" if d<0 else "NEUTRAL",
                 "context_score":ctx,
-                "long_permission":long_perm,
-                "short_permission":short_perm,
+                "long_direction_score":long_score,
+                "short_direction_score":short_score,
+                # Backward-compatible aliases for old dashboard/database readers.
+                "long_permission":long_score,
+                "short_permission":short_score,
                 "triggered":bool(trigger),
                 "action":action,
                 "setup_grade":grade,
                 "setup_score":score,
                 "why":why,
-                "plan":self._plan(live_price,T.get(plan_tf),d,name)
+                "plan":plan,
+                "diagnostics":diag,
             }
 
         lanes={
-            "SCALP":lane("SCALP",ds,scalp_ctx,scalp_action,scalp_grade,scalp_score,scalp_trigger,"5m",{
+            "SCALP":lane("SCALP",ds,scalp_ctx,scalp_action,scalp_grade,scalp_score,scalp_trigger,scalp_plan,scalp_diag,{
                 "higher_tf_permission":scalp_permission,"15m_support":a15,"5m_setup":a5,"3m_confirm":a3,"1m_execution":a1
             }),
-            "INTRADAY":lane("INTRADAY",di,intra_ctx,intra_action,intra_grade,intra_score,intra_trigger,"15m",{
+            "INTRADAY":lane("INTRADAY",di,intra_ctx,intra_action,intra_grade,intra_score,intra_trigger,intra_plan,intra_diag,{
                 "1h_support":ia1h,"30m_setup":ia30,"15m_trigger":ia15
             }),
-            "SWING":lane("SWING",dw,swing_ctx,swing_action,swing_grade,swing_score,swing_trigger,"4H",{
+            "SWING":lane("SWING",dw,swing_ctx,swing_action,swing_grade,swing_score,swing_trigger,swing_plan,swing_diag,{
                 "1d_support":wa1d,"4h_trigger":wa4h
             }),
         }
 
-        best=max(lanes.values(),key=lambda x:x["setup_score"])
+        actionable=[x for x in lanes.values() if x["action"] in ("LONG","SHORT")]
+        best=max(actionable or list(lanes.values()),key=lambda x:x["setup_score"])
+
         return {
             "lanes":lanes,
             "best_setup":best,
@@ -166,6 +255,6 @@ class DecisionEngine:
                 "direction":ds,
                 "context_score":scalp_ctx,
                 "variants":variants,
-                "plan":self._plan(live_price,T.get("5m"),ds,"SCALP")
+                "plan":scalp_plan
             }
         }

@@ -13,6 +13,19 @@ class ResearchJournal:
         c.row_factory=sqlite3.Row
         return c
 
+    def _migrate(self,c):
+        existing={x["name"] for x in c.execute("PRAGMA table_info(snapshots)").fetchall()}
+        cols={
+          "market_regime":"TEXT",
+          "opportunity_id":"TEXT",
+          "entry_timing":"TEXT",
+          "chasing_risk":"TEXT",
+          "available_rr":"REAL"
+        }
+        for name,ddl in cols.items():
+            if name not in existing:
+                c.execute(f"ALTER TABLE snapshots ADD COLUMN {name} {ddl}")
+
     def _init(self):
         c=self.con()
         c.executescript("""
@@ -36,26 +49,33 @@ class ResearchJournal:
         );
         CREATE INDEX IF NOT EXISTS idx_snapshots_ts ON snapshots(ts);
         """)
+        self._migrate(c)
         c.commit(); c.close()
 
-    def snapshot(self,price,analysis,decision,context):
+    def snapshot(self,price,analysis,decision,context,market_regime=None):
         if price is None:
             return
         now=time.time()
         bucket=int(now//self.interval)*self.interval
         best=decision.get("best_setup",{})
+        opp=best.get("opportunity") or {}
+        diag=best.get("diagnostics") or {}
         c=self.con()
         c.execute("""
           INSERT OR IGNORE INTO snapshots(
             bucket_ts,ts,price,bias,bias_score,best_lane,best_action,
             best_grade,best_score,context_regime,context_score,
-            analysis_json,lanes_json
-          ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+            analysis_json,lanes_json,market_regime,opportunity_id,
+            entry_timing,chasing_risk,available_rr
+          ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,(
             bucket,now,float(price),analysis.get("bias"),safe(analysis.get("bias_score")),
             best.get("lane"),best.get("action"),best.get("setup_grade"),
             safe(best.get("setup_score")),context.get("regime"),safe(context.get("score")),
-            json_dumps(analysis),json_dumps(decision.get("lanes",{}))
+            json_dumps(analysis),json_dumps(decision.get("lanes",{})),
+            (market_regime or {}).get("regime"),opp.get("opportunity_id"),
+            diag.get("entry_timing"),diag.get("chasing_risk"),
+            safe(diag.get("available_rr"),None)
         ))
         c.commit(); c.close()
 
@@ -92,7 +112,8 @@ class ResearchJournal:
             })
         recent=[dict(r) for r in c.execute("""
           SELECT ts,price,bias,best_lane,best_action,best_grade,best_score,
-                 context_regime,r1h_pct,r4h_pct
+                 context_regime,market_regime,opportunity_id,
+                 entry_timing,chasing_risk,available_rr,r1h_pct,r4h_pct
           FROM snapshots ORDER BY id DESC LIMIT 25
         """).fetchall()]
         c.close()
