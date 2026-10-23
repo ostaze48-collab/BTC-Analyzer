@@ -15,6 +15,7 @@ from .cycle_walkforward import CycleWalkForward
 from .db import Database
 from .edge_lab import analyze_feature_edge
 from .engine import TradingEngine
+from .incremental_edge import incremental_walkforward
 from .readiness import readiness_report
 
 
@@ -65,7 +66,7 @@ async def lifespan(app: FastAPI):
     await engine.stop()
 
 
-app = FastAPI(title="BTC AI Trader V1.13", version="1.13.0", lifespan=lifespan)
+app = FastAPI(title="BTC AI Trader V1.14", version="1.14.0", lifespan=lifespan)
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -79,7 +80,7 @@ async def home():
 async def health():
     return {
         "ok": True,
-        "service": "BTC AI Trader V1.13",
+        "service": "BTC AI Trader V1.14",
         "market_connected": bool(engine and engine.market.connected),
         "backtest_running": backtester.running,
         "cycle_validation_running": cycle_validator.running,
@@ -90,6 +91,7 @@ async def health():
         "learning_journal": True,
         "feature_factory": True,
         "feature_edge_lab": True,
+        "incremental_walkforward": True,
         "feature_auto_promotion": False,
         "cycle_models": True,
         "readiness_gate": True,
@@ -132,6 +134,12 @@ async def api_readiness():
 async def api_edge_lab(limit: int = 5000):
     samples = db.edge_samples(max(1, min(limit, 20000)))
     return analyze_feature_edge(samples)
+
+
+@app.get("/api/incremental-edge")
+async def api_incremental_edge(limit: int = 5000, max_features: int = 250):
+    samples = db.edge_samples(max(1, min(limit, 20000)))
+    return incremental_walkforward(samples, max_features=max(10, min(max_features, 1000)))
 
 
 @app.get("/api/network")
