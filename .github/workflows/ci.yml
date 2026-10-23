@@ -36,6 +36,7 @@ jobs:
         run: |
           node --check app/static/app.js
           node --check app/static/structure.js
+          node --check app/static/patterns.js
           node --check app/static/backtest.js
 
       - name: Unit tests

@@ -4,9 +4,9 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
+from .analysis import enriched_snapshot
 from .brains import analyze_brains, layer_context
 from .db import Database
-from .indicators import snapshot
 from .market import MarketData
 from .master import select_trade
 from .trade_manager import TradeManager
@@ -34,9 +34,9 @@ class TradingEngine:
         await self.market.stop()
 
     def _build_snapshots(self) -> dict[str, dict[str, Any]]:
-        # Trading decisions use only confirmed/closed candles on every timeframe.
-        # The UI still receives the current live candle separately for charting.
-        return {interval: snapshot(self.market.get_closed(interval)) for interval in self.market.candles}
+        # Every timeframe uses confirmed closed candles, then receives the same
+        # technical + candlestick + classical-pattern enrichment pipeline.
+        return {interval: enriched_snapshot(self.market.get_closed(interval)) for interval in self.market.candles}
 
     async def analyze(self, force: bool = False) -> None:
         if self._analysis_lock.locked() and not force:
@@ -79,8 +79,6 @@ class TradingEngine:
             closed_trade = self.trade_manager.on_price(price)
             await self.broadcast({"type": "candle", "interval": event["interval"], "candle": candle, "price": price})
 
-            # Re-evaluate once per confirmed 1m close. Higher timeframes are
-            # automatically incorporated when their confirmed candle changes.
             if event["interval"] == "1m" and event["closed"]:
                 await self.analyze()
             elif closed_trade:
@@ -102,6 +100,7 @@ class TradingEngine:
                 "one_trade_only": True, "paper_only": True,
                 "analysis_uses_closed_candles": True,
                 "intervals": list(self.market.candles.keys()),
+                "pattern_engine": True,
             },
         }
 

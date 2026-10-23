@@ -28,9 +28,14 @@ def _weighted_vote(snapshots: dict[str, dict[str, Any]], weights: dict[str, floa
     used = 0.0
     details: dict[str, float] = {}
     for interval, weight in weights.items():
-        value = vote(snapshots.get(interval, {}))
+        snap = snapshots.get(interval, {})
+        value = vote(snap)
+        # Patterns are intentionally capped as a secondary confirmation factor.
+        # Trend, structure, momentum and macro context remain dominant.
+        value += float(snap.get("pattern_bias", 0.0)) * 0.18
+        value = max(-1.0, min(1.0, value))
         details[interval] = round(value, 3)
-        if snapshots.get(interval):
+        if snap:
             total += value * weight
             used += weight
     return (total / used if used else 0.0), details
@@ -86,27 +91,26 @@ def _proposal(profile: BrainProfile, snapshots: dict[str, dict[str, Any]], macro
         confidence += min(6.0, 6.0 * macro_strength * profile.macro_sensitivity)
     elif macro_conflict:
         confidence -= min(18.0, (8.0 + 10.0 * macro_strength) * profile.macro_sensitivity)
+
+    anchor_pattern_bias = float(anchor.get("pattern_bias", 0.0))
+    pattern_aligned = (direction == "LONG" and anchor_pattern_bias > 0.08) or (direction == "SHORT" and anchor_pattern_bias < -0.08)
+    pattern_conflict = (direction == "LONG" and anchor_pattern_bias < -0.14) or (direction == "SHORT" and anchor_pattern_bias > 0.14)
+    if pattern_aligned:
+        confidence += min(3.0, abs(anchor_pattern_bias) * 4.0)
+    elif pattern_conflict:
+        confidence -= min(4.0, abs(anchor_pattern_bias) * 5.0)
     confidence = max(45.0, min(95.0, confidence))
 
     common = {
-        "brain": profile.name,
-        "direction": direction,
-        "confidence": round(confidence, 2),
-        "bias": round(bias, 4),
-        "anchor": profile.anchor,
-        "votes": details,
-        "macro_direction": macro_dir,
-        "macro_bias": macro["bias"],
-        "macro_strength": macro["strength"],
-        "macro_conflict": macro_conflict,
-        "macro_aligned": macro_aligned,
-        "structure_event": anchor.get("structure_event"),
-        "swing_high": anchor.get("swing_high"),
-        "swing_low": anchor.get("swing_low"),
-        "fvg_zones": anchor.get("fvg_zones", []),
-        "order_block": anchor.get("order_block"),
-        "liquidity": anchor.get("liquidity", {}),
-        "trend_channel": anchor.get("trend_channel"),
+        "brain": profile.name, "direction": direction, "confidence": round(confidence, 2),
+        "bias": round(bias, 4), "anchor": profile.anchor, "votes": details,
+        "macro_direction": macro_dir, "macro_bias": macro["bias"], "macro_strength": macro["strength"],
+        "macro_conflict": macro_conflict, "macro_aligned": macro_aligned,
+        "pattern_bias": round(anchor_pattern_bias, 4), "pattern_aligned": pattern_aligned, "pattern_conflict": pattern_conflict,
+        "candlestick_patterns": anchor.get("candlestick_patterns", []), "chart_patterns": anchor.get("chart_patterns", []),
+        "structure_event": anchor.get("structure_event"), "swing_high": anchor.get("swing_high"), "swing_low": anchor.get("swing_low"),
+        "fvg_zones": anchor.get("fvg_zones", []), "order_block": anchor.get("order_block"),
+        "liquidity": anchor.get("liquidity", {}), "trend_channel": anchor.get("trend_channel"),
     }
     if direction == "WAIT":
         common["reason"] = "No directional edge above threshold"
@@ -154,7 +158,6 @@ def analyze_brains(snapshots: dict[str, dict[str, Any]]) -> list[dict[str, Any]]
     macro = macro_context(snapshots)
     proposals = [_proposal(profile, snapshots, macro) for profile in PROFILES]
     directional = [p for p in proposals if p.get("direction") in ("LONG", "SHORT")]
-
     for p in proposals:
         if p.get("direction") not in ("LONG", "SHORT"):
             p["consensus_score"] = 0.0
@@ -171,7 +174,6 @@ def analyze_brains(snapshots: dict[str, dict[str, Any]]) -> list[dict[str, Any]]
         elif same == 1 and opposite == 0: p["shared_context"] = "PARTIAL_CONSENSUS"
         elif opposite >= 1: p["shared_context"] = "CONFLICT"
         else: p["shared_context"] = "SOLO"
-
         prob = p["win_probability"] / 100
         reward_pct = abs(p["tp2"] - p["entry"]) / p["entry"] * 100
         fees_pct = settings.paper_fee_rate * 2 * 100
