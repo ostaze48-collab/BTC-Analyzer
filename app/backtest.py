@@ -154,6 +154,7 @@ class BacktestEngine:
             raise RuntimeError("No historical 1m candles were returned")
         histories = {tf: deque(maxlen=settings.history_limit) for tf in settings.intervals}
         pointers = {tf: 0 for tf in settings.intervals}
+        cached_snapshots: dict[str, dict[str, Any]] = {tf: {} for tf in settings.intervals}
         capital = float(settings.paper_start_capital)
         peak, max_dd = capital, 0.0
         active = None
@@ -162,26 +163,50 @@ class BacktestEngine:
 
         for minute in timeline:
             now = minute["close_time"]
+            changed: set[str] = set()
             for tf in settings.intervals:
                 rows, i = data[tf], pointers[tf]
                 while i < len(rows) and rows[i]["close_time"] <= now:
-                    histories[tf].append(rows[i]); i += 1
+                    histories[tf].append(rows[i])
+                    i += 1
+                    changed.add(tf)
                 pointers[tf] = i
+
             if active:
                 closed = self._manage(active, minute)
                 if closed:
-                    capital += closed["realized_pnl"]; trades.append(closed); active = None
-                    peak = max(peak, capital); max_dd = max(max_dd, (peak - capital) / peak * 100 if peak else 0)
-            snaps = {tf: snapshot(list(histories[tf])) for tf in settings.intervals}
+                    capital += closed["realized_pnl"]
+                    trades.append(closed)
+                    active = None
+                    peak = max(peak, capital)
+                    max_dd = max(max_dd, (peak - capital) / peak * 100 if peak else 0)
+
+            # Higher-timeframe snapshots are expensive and do not change every
+            # minute. Recompute only when a fresh candle becomes available.
+            for tf in settings.intervals:
+                if tf in changed or not cached_snapshots[tf]:
+                    cached_snapshots[tf] = snapshot(list(histories[tf]))
+            snaps = cached_snapshots
             if any(not snaps[tf] for tf in settings.intervals):
                 continue
+
             advisory = select_trade(analyze_brains(snaps))
             if active:
-                opp = [p for p in advisory["proposals"] if p.get("direction") in ("LONG", "SHORT") and p["direction"] != active["direction"] and p.get("risk_gate") == "PASSED" and p.get("final_score", 0) >= 84]
+                opp = [
+                    p for p in advisory["proposals"]
+                    if p.get("direction") in ("LONG", "SHORT")
+                    and p["direction"] != active["direction"]
+                    and p.get("risk_gate") == "PASSED"
+                    and p.get("final_score", 0) >= 84
+                ]
                 if len(opp) >= 2:
                     closed = self._close(active, minute["close"], "EARLY_EXIT_OPPOSITE_CONSENSUS", now)
-                    capital += closed["realized_pnl"]; trades.append(closed); active = None
-                    peak = max(peak, capital); max_dd = max(max_dd, (peak - capital) / peak * 100 if peak else 0)
+                    capital += closed["realized_pnl"]
+                    trades.append(closed)
+                    active = None
+                    peak = max(peak, capital)
+                    max_dd = max(max_dd, (peak - capital) / peak * 100 if peak else 0)
+
             if not active and advisory["action"] in ("LONG", "SHORT") and advisory["winner"]:
                 active = self._open(advisory["winner"], capital, now)
                 if active:
@@ -190,8 +215,10 @@ class BacktestEngine:
         if active:
             last = timeline[-1]
             closed = self._close(active, last["close"], "END_OF_TEST", last["close_time"])
-            capital += closed["realized_pnl"]; trades.append(closed)
-            peak = max(peak, capital); max_dd = max(max_dd, (peak - capital) / peak * 100 if peak else 0)
+            capital += closed["realized_pnl"]
+            trades.append(closed)
+            peak = max(peak, capital)
+            max_dd = max(max_dd, (peak - capital) / peak * 100 if peak else 0)
 
         pnls = [t["realized_pnl"] for t in trades]
         wins = sum(p > 0 for p in pnls)
@@ -211,11 +238,14 @@ class BacktestEngine:
                 "selected": selected[brain],
             }
         return {
-            "symbol": settings.symbol, "days": days,
+            "symbol": settings.symbol,
+            "days": days,
             "assumptions": {"paper_only": True, "one_trade_only": True, "same_candle_rule": "STOP_FIRST_CONSERVATIVE"},
             "metrics": {
-                "starting_capital": round(settings.paper_start_capital, 2), "ending_capital": round(capital, 2),
-                "net_pnl": round(capital-settings.paper_start_capital, 2), "return_pct": round((capital/settings.paper_start_capital-1)*100, 2),
+                "starting_capital": round(settings.paper_start_capital, 2),
+                "ending_capital": round(capital, 2),
+                "net_pnl": round(capital-settings.paper_start_capital, 2),
+                "return_pct": round((capital/settings.paper_start_capital-1)*100, 2),
                 "trades": len(trades), "wins": wins, "losses": len(trades)-wins,
                 "win_rate": round(wins/len(trades)*100, 2) if trades else 0.0,
                 "profit_factor": round(gw/gl, 3) if gl else (999.0 if gw else 0.0),
@@ -223,5 +253,14 @@ class BacktestEngine:
                 "max_drawdown_pct": round(max_dd, 3),
             },
             "by_brain": by_brain,
-            "recent_trades": [{"brain": t["brain"], "direction": t["direction"], "entry": round(t["entry"],2), "exit": round(t["exit_price"],2), "pnl": round(t["realized_pnl"],2), "r": round(t["r_multiple"],3), "reason": t["exit_reason"], "mfe_pct": round(t["mfe_pct"],3), "mae_pct": round(t["mae_pct"],3)} for t in trades[-100:]],
+            "recent_trades": [
+                {
+                    "brain": t["brain"], "direction": t["direction"],
+                    "entry": round(t["entry"],2), "exit": round(t["exit_price"],2),
+                    "pnl": round(t["realized_pnl"],2), "r": round(t["r_multiple"],3),
+                    "reason": t["exit_reason"], "mfe_pct": round(t["mfe_pct"],3),
+                    "mae_pct": round(t["mae_pct"],3),
+                }
+                for t in trades[-100:]
+            ],
         }
