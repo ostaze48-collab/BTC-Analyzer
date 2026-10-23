@@ -1,0 +1,46 @@
+name: BTC AI Trader CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Compile Python
+        run: python -m compileall -q app run.py tests
+
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Start app and verify health
+        shell: bash
+        run: |
+          uvicorn app.main:app --host 127.0.0.1 --port 8000 > /tmp/btc-ai.log 2>&1 &
+          PID=$!
+          trap 'kill $PID || true' EXIT
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:8000/health; then
+              exit 0
+            fi
+            sleep 2
+          done
+          cat /tmp/btc-ai.log
+          exit 1
