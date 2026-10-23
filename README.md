@@ -1,97 +1,78 @@
-# BTC AI Trader V1.17
+# BTC AI Trader V1.18
 
 منظومة بحث ومحاكاة **Paper Trading فقط** لتحليل BTCUSDT عبر ثلاثة عقول مترابطة: `SCALP` و`INTRADAY` و`SWING`، ثم اختيار صفقة واحدة بواسطة `MASTER`.
 
 > التداول الحقيقي معطّل. لا يتم الانتقال إليه إلا بعد اجتياز Readiness Gate واختبارات Out-of-Sample/Walk-Forward طويلة بما يكفي.
 
-## ما تعمل عليه المنظومة الآن
+## المكونات الحالية
 
-- قراءة متعددة الفريمات من `1m` حتى `1Y` عبر 18 فريمًا.
-- مؤشرات واتجاه وزخم وحجم وتقلب وVWAP وEMA/RSI/MACD/ATR ومئات Background Features.
-- Support/Resistance، Swing High/Low، BOS، CHoCH، FVG، Order Blocks، Liquidity Sweeps، Trend Channels.
-- Candlestick + Classical Patterns كعوامل تأكيد لا كإشارات منفردة.
-- Cycle/Valuation Context: Power Law، HPR/Rainbow، Mayer، Pi Cycle، 4-Year SMA.
-- Network Intelligence وDerivatives Intelligence في وضع `SHADOW_ONLY` حتى تثبت فائدتها خارج العينة.
-- Feature Edge Lab: فصل زمني Train/Test لقياس فائدة الخصائص.
-- Incremental Edge Walk-Forward: مقارنة Baseline مقابل Baseline+Feature filter عبر نوافذ لاحقة.
-- Historical Setup Memory: يقارن الصفقة المرشحة بحالات شارت سابقة مشابهة ويقيس ما حدث بعدها بـR multiples وقاعدة STOP_FIRST المحافظة.
-- Analog Edge Validation: تختبر هل بيانات السوابق نفسها تضيف Edge خارج العينة بدل اعتبار التشابه التاريخي دليلًا كافيًا بحد ذاته.
-- **Long Historical Replay Memory**: توسع ذاكرة السوابق حسب العقل المرشح في الخلفية بدل الاكتفاء بـ500 شمعة حديثة.
-- Learning Journal: يحفظ Features عند الدخول والخروج، MFE/MAE، Regime، العقل، والنتيجة.
-- Replay/Backtesting لنفس منطق العقول وإدارة المخاطر.
+- 18 فريمًا من `1m` حتى `1Y`.
+- مؤشرات فنية + Market Structure + Liquidity + Patterns + مئات Background Features.
+- Cycle/Valuation Models.
+- Network وDerivatives في `SHADOW_ONLY`.
+- Feature Edge Lab + Incremental Walk-Forward.
+- Historical Setup Memory + Analog Edge Validation.
+- Long Historical Replay Memory حسب العقل.
+- **Historical Signature Cache V1.18** لتسريع مقارنة مئات السوابق التاريخية.
+- Adaptive paper risk/leverage، صفقة واحدة فقط، وحد حماية رأسمال تجريبي.
+- Learning Journal + Backtesting + Readiness Gate.
 
-## الذاكرة التاريخية الطويلة V1.17
+## Historical Signature Cache V1.18
 
-لا تقوم المنظومة بتحميل سنوات من كل فريم عند الإقلاع. التحميل **Lazy** ويبدأ فقط عندما يظهر عقل مرشح:
+بدل إعادة حساب كل المؤشرات عند كل نقطة تاريخية مع كل تحديث، تبني المنظومة بصمات سوق مضغوطة في الخلفية:
 
-- `SCALP`: تاريخ أعمق لـ5m و15m و1H و4H و1D، مع هدف يصل إلى نحو 45 يومًا على 5m وأربع سنوات على اليومي.
-- `INTRADAY`: يمتد من 15m حتى 1W، مع أشهر للفريمات الصغيرة وسنوات للفريمات الكبيرة.
-- `SWING`: يركز على 4H و1D و1W و1M، ويستهدف عدة سنوات من التاريخ حيث يتوفر.
+- الهدف حتى نحو `720` حالة تاريخية موزعة على كامل الذاكرة المتاحة.
+- لا يبدأ Cache العميق قبل توفر `700` شمعة على الأقل في فريم العقل، حتى لا يعاد بناؤه على نافذة 500 شمعة متحركة.
+- Revision الأرشيف مستقرة: تعتمد على يوم/حجم تاريخي تقريبي بدل التغير مع كل شمعة دقيقة.
+- أثناء بناء Cache يستخدم النظام fallback أصغر (~180 حالة) ولا يتوقف التحليل الحي.
+- بعد اكتمال Cache تتم مقارنة الصفقة الحالية بكل البصمات بسرعة، ثم يُقيّم المسار التفصيلي فقط لأقرب الحالات.
+- لا تُنشأ بصمة قرب نهاية التاريخ ما لم توجد بعدها Future Window كاملة؛ لمنع Lookahead.
+- قاعدة تقييم المسار تبقى `STOP_FIRST_CONSERVATIVE`.
+- Signature Cache وHistorical Analog يظلان `SHADOW_ONLY` ووزنهما في MASTER = `0` حتى اجتياز تحقق OOS إضافي.
 
-الأرشيف:
+## الذاكرة التاريخية الطويلة
 
-- يُحمّل في الخلفية ولا يوقف تحليل السوق الحي.
-- يُخزن في ذاكرة الخادم مؤقتًا مع TTL، ثم يُعاد تحميله عند الحاجة.
-- يُدمج مع الشموع الحية بدون تكرار timestamps، وتُفضّل الشمعة الحالية عند التعارض.
-- يوسع عينة Historical Analog فقط، ووزنه في MASTER يظل `0`.
-- إذا فشل مصدر أو فريم، يستمر النظام بالحالة `PARTIAL` بدل تعطيل التداول التجريبي.
+- `SCALP`: تاريخ أعمق للفريمات الصغيرة والمتوسطة.
+- `INTRADAY`: أشهر/سنوات حسب الفريم.
+- `SWING`: عدة سنوات على 4H/1D/1W/1M حيث يتوفر.
+- التحميل Lazy في الخلفية ولا يوقف startup.
+- الفشل الجزئي لا يوقف النظام.
 
-## إدارة الصفقة والمخاطرة
+## إدارة المخاطرة
 
-- رأس المال التجريبي الابتدائي: `$1,000`.
-- صفقة واحدة فقط في أي لحظة.
-- النظام يحدد `LONG/SHORT` وحجم المركز والرافعة Paper تلقائيًا.
-- الرافعة الافتراضية القصوى في Paper: `5x`.
-- المخاطرة عند Stop ديناميكية وبحد أقصى افتراضي يقارب `1.4%` للصفقة الأقوى، مع خفضها عند Drawdown.
-- أهداف ديناميكية من `1R` حتى `5R` حسب قوة الفرصة والعقل وحالة السوق.
-- توقف وقائي عن فتح صفقات جديدة قبل حد الخسارة الكلي.
-- الحد الصلب للنموذج التجريبي: `25%` من رأس المال الابتدائي، مع التنبيه أن الانزلاق/gaps في السوق الحقيقي قد يتجاوز أي حد برمجي.
+- رأس المال التجريبي: `$1,000`.
+- صفقة واحدة فقط.
+- LONG/SHORT وحجم المركز والرافعة Paper تُحدد تلقائيًا.
+- الرافعة الافتراضية القصوى: `5x`.
+- مخاطرة Stop ديناميكية بحد أعلى افتراضي يقارب `1.4%` للفرص الأقوى.
+- أهداف من `1R` حتى `5R`.
+- توقف وقائي قبل حد الخسارة الكلي.
+- حد النموذج التجريبي الكلي `25%`، وليس ضمانًا للسوق الحقيقي بسبب gaps/slippage.
 
-## طبقات التحقق
+## كيف نقرر أن البيانات السابقة مفيدة؟
 
-لا يتم اعتبار أي Feature أو مصدر جديد مفيدًا لمجرد أنه يبدو جيدًا تاريخيًا:
-
-1. Feature Pool واسع.
-2. Chronological Edge Lab.
-3. Incremental Walk-Forward.
-4. Shadow Trial بوزن صفر.
-5. Full-engine OOS replay.
-6. Paper/Shadow performance.
-7. Readiness Gate.
-8. فقط بعد ذلك يمكن بحث الانتقال الحقيقي يدويًا.
-
-Historical Analog وLong Historical Memory وNetwork وDerivatives لا يغيرون MASTER حاليًا (`weight = 0`). حتى إذا ظهرت Historical Analog كمرشح مفيد في Walk-Forward، تبقى بوزن صفر إلى أن تجتاز Full-engine OOS replay لاحقًا.
-
-## كيف تُقرأ الصفقة على الشارت السابق
-
-عندما توجد صفقة مرشحة، Historical Setup Memory تبحث عن حالات سابقة مشابهة من حيث اتجاه الفريمات، Regime، الاتجاه والبنية، RSI، EMA/VWAP distance، الحجم، التقلب، وطبقات Micro/Intraday/Swing/Macro. ثم تتابع ما حدث بعد كل حالة سابقة وتعرض:
-
-- عدد الحالات المشابهة.
-- متوسط التشابه.
-- نسبة ضرب Stop قبل 1R.
-- متوسط MFE/MAE بوحدة R.
-- نسبة وصول الحالات إلى 1R و2R و3R و4R و5R.
-- أمثلة زمنية من الحالات السابقة.
-
-V1.16 تختبر هل هذه المعلومات مفيدة فعلاً عبر Edge Lab وIncremental Walk-Forward، وV1.17 توسع عمق التاريخ الذي تُبنى عليه هذه المقارنات.
+1. Historical Analog يعرض التشابه والنتائج السابقة.
+2. Analog metrics تدخل Edge Lab كـShadow Features.
+3. Chronological Train/Test يمنع خلط الماضي بالمستقبل.
+4. Incremental Walk-Forward يقارن Baseline مقابل Baseline+Feature.
+5. حتى عند ظهور Edge يبقى الوزن صفرًا إلى Full-engine OOS replay.
+6. ثم Paper/Shadow performance وReadiness Gate.
 
 ## واجهة الهاتف
 
-الواجهة Phone-First وتعرض:
+الواجهة Phone-First وتعرض كل طبقات المنظومة، ومنها:
 
-- قرار MASTER والعقول الثلاثة.
-- جميع الفريمات من الدقيقة إلى السنة.
+- MASTER والعقول الثلاثة.
+- كل الفريمات من الدقيقة إلى السنة.
 - الشارت والرسومات الفنية.
-- الصفقة النشطة وحجمها والرافعة والمخاطرة والأهداف.
-- Market Regime وCycle Models.
-- Network/Derivatives Shadow data.
-- Feature Edge Lab وIncremental Walk-Forward.
-- Historical Setup Memory ونتائج الحالات السابقة المشابهة.
-- Analog Edge Validation: هل السوابق أثبتت قيمة إضافية أم لا.
-- Long Historical Replay Memory: حالة التحميل وعمق كل فريم وعدد الشموع لكل عقل.
-- Backtest وLearning Journal وسجل الصفقات.
+- Risk/Leverage/Targets.
+- Cycle/Network/Derivatives.
+- Feature Edge وIncremental Walk-Forward.
+- Historical Setup Memory وAnalog Validation.
+- Long Historical Memory.
+- Signature Cache: حالته، عدد البصمات، وقت البناء، وهل يتم استخدام Cache أو Fallback.
 
-## التشغيل محليًا
+## التشغيل
 
 ```bash
 python -m venv .venv
@@ -116,25 +97,23 @@ pip install -r requirements.txt
 python run.py
 ```
 
-وافتح:
+افتح:
 
 ```text
 http://127.0.0.1:8000
 ```
 
-## CI والنشر
+## CI
 
-GitHub Actions يتحقق من:
+يفحص GitHub Actions:
 
 - Python compile.
-- Syntax لكل ملفات JavaScript الحالية حتى `v27.js`.
-- Unit Tests.
+- JavaScript syntax حتى `v28.js`.
+- Unit tests، بما فيها No-lookahead وcache revision stability.
 - تشغيل التطبيق و`/health`.
-- مزامنة رقم الإصدار وواجهات الهاتف مع ملفات التطوير الحديثة.
+- مزامنة النسخة والواجهة مع قدرات النظام.
 
-خدمة Render المرتبطة بفرع `main` تنشر تلقائيًا بعد نجاح checks حسب إعداد الخدمة.
-
-## Environment Variables الأساسية
+## متغيرات البيئة الأساسية
 
 ```text
 BTC_SYMBOL=BTCUSDT
@@ -150,8 +129,8 @@ MAX_TOTAL_DRAWDOWN=0.25
 SOFT_PAUSE_DRAWDOWN=0.23
 ```
 
-## مبدأ المشروع
+## المبدأ
 
-`Market Data → Multi-Timeframe Analysis → 3 Brains → MASTER → Adaptive Risk → One Trade → Long Historical Evidence → Analog Validation → Journal → Walk-Forward Learning → Readiness Gate`
+`Market Data → Multi-Timeframe Analysis → 3 Brains → MASTER → Adaptive Risk → Long Historical Memory → Signature Cache → Analog Evidence → OOS Validation → Journal → Readiness Gate`
 
-الهدف ليس زيادة عدد المؤشرات، بل استخدام Pool واسع ثم الاحتفاظ فقط بما يثبت Edge إضافيًا ومستقرًا خارج العينة.
+الهدف ليس أكبر عدد مؤشرات، بل أكبر Pool مفيد ثم استبعاد الضوضاء والاحتفاظ فقط بما يثبت Edge مستقرًا خارج العينة.
