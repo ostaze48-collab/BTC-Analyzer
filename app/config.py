@@ -9,11 +9,17 @@ def _f(name: str, default: float) -> float:
         return default
 
 
+def _i(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
 @dataclass(frozen=True)
 class Settings:
     symbol: str = os.getenv("BTC_SYMBOL", "BTCUSDT").upper()
 
-    # Native Binance intervals plus synthetic higher-timeframe candles.
     native_intervals: tuple[str, ...] = (
         "1m", "3m", "5m", "15m", "30m",
         "1h", "2h", "4h", "6h", "8h", "12h",
@@ -27,14 +33,19 @@ class Settings:
     swing_intervals: tuple[str, ...] = ("4h", "6h", "8h", "12h", "1d", "3d")
     macro_intervals: tuple[str, ...] = ("1w", "1M", "3M", "6M", "1y")
     history_limit: int = 500
-
-    # Higher calendar timeframes have naturally fewer historical bars. Requiring
-    # 200 yearly candles would be impossible for BTC, so readiness is scaled by TF.
     history_min_bars: dict[str, int] | None = None
 
     paper_start_capital: float = _f("PAPER_START_CAPITAL", 1000.0)
+    # Legacy baseline retained for compatibility; V1.12 uses adaptive risk engine.
     risk_per_trade: float = _f("RISK_PER_TRADE", 0.0075)
+    max_risk_per_trade: float = _f("MAX_RISK_PER_TRADE", 0.014)
     paper_fee_rate: float = _f("PAPER_FEE_RATE", 0.001)
+    max_paper_leverage: int = max(1, min(5, _i("MAX_PAPER_LEVERAGE", 5)))
+
+    # Portfolio protection: hard loss limit 25% from starting capital.
+    # New entries stop earlier at 23% to preserve a buffer before the hard floor.
+    max_total_drawdown: float = min(0.25, max(0.05, _f("MAX_TOTAL_DRAWDOWN", 0.25)))
+    soft_pause_drawdown: float = min(max_total_drawdown - 0.005, max(0.05, _f("SOFT_PAUSE_DRAWDOWN", 0.23)))
 
     min_confidence: float = _f("MIN_CONFIDENCE", 65.0)
     min_safety_score: float = _f("MIN_SAFETY_SCORE", 68.0)

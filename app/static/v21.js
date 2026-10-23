@@ -46,4 +46,9 @@
   }
   const btn=document.getElementById("refreshDerivatives");if(btn)btn.addEventListener("click",async()=>{btn.disabled=true;await refresh(true);btn.disabled=false;});
   refresh(false);setInterval(()=>refresh(false),60000);
+
+  const next=document.createElement('script');
+  next.src='/static/v22.js';
+  next.defer=true;
+  document.body.appendChild(next);
 })();

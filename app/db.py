@@ -73,10 +73,14 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_trade_features_trade ON trade_features(trade_id);
                 """
             )
-            # Safe migrations for databases created by V1-V1.5.
             self._ensure_column("trades", "market_regime", "TEXT")
             self._ensure_column("trades", "mfe_pct", "REAL NOT NULL DEFAULT 0")
             self._ensure_column("trades", "mae_pct", "REAL NOT NULL DEFAULT 0")
+            self._ensure_column("trades", "leverage", "INTEGER NOT NULL DEFAULT 1")
+            self._ensure_column("trades", "notional", "REAL NOT NULL DEFAULT 0")
+            self._ensure_column("trades", "margin_used", "REAL NOT NULL DEFAULT 0")
+            self._ensure_column("trades", "risk_budget", "REAL NOT NULL DEFAULT 0")
+            self._ensure_column("trades", "target_r", "REAL NOT NULL DEFAULT 0")
 
             row = self.conn.execute("SELECT id FROM account WHERE id=1").fetchone()
             if not row:
@@ -106,14 +110,19 @@ class Database:
                     entry, stop_loss, tp1, tp2, tp3,
                     quantity, remaining_qty, realized_pnl,
                     confidence, safety_score, profit_score, final_score,
-                    market_regime, mfe_pct, mae_pct, meta_json
-                ) VALUES (?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, 0, 0, ?)
+                    market_regime, mfe_pct, mae_pct,
+                    leverage, notional, margin_used, risk_budget, target_r,
+                    meta_json
+                ) VALUES (?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     trade["brain"], trade["direction"], utc_now(),
                     trade["entry"], trade["stop_loss"], trade["tp1"], trade["tp2"], trade["tp3"],
                     trade["quantity"], trade["quantity"], trade["confidence"], trade["safety_score"],
                     trade["profit_score"], trade["final_score"], trade.get("market_regime"),
+                    int(trade.get("leverage", 1)), float(trade.get("notional", 0.0)),
+                    float(trade.get("margin_used", 0.0)), float(trade.get("risk_budget", 0.0)),
+                    float(trade.get("target_r", 0.0)),
                     json.dumps(trade.get("meta", {}), ensure_ascii=False),
                 ),
             )
@@ -184,14 +193,20 @@ class Database:
                 peak = max(peak, equity)
                 if peak > 0:
                     max_dd = max(max_dd, (peak - equity) / peak * 100)
+            start = float(account["starting_capital"])
+            capital = float(account["capital"])
+            start_dd = max(0.0, (start - capital) / start * 100) if start > 0 else 0.0
             return {
-                "starting_capital": round(float(account["starting_capital"]), 2),
-                "capital": round(float(account["capital"]), 2),
-                "net_pnl": round(float(account["capital"]) - float(account["starting_capital"]), 2),
+                "starting_capital": round(start, 2),
+                "capital": round(capital, 2),
+                "net_pnl": round(capital - start, 2),
                 "trades": len(pnls), "wins": wins, "losses": len(pnls) - wins,
                 "win_rate": round((wins / len(pnls) * 100) if pnls else 0.0, 2),
                 "profit_factor": round((gross_win / gross_loss) if gross_loss else (999.0 if gross_win else 0.0), 2),
                 "max_drawdown_pct": round(max_dd, 2),
+                "drawdown_from_start_pct": round(start_dd, 2),
+                "hard_drawdown_limit_pct": round(settings.max_total_drawdown * 100, 2),
+                "soft_pause_drawdown_pct": round(settings.soft_pause_drawdown * 100, 2),
             }
 
     def learning_summary(self) -> dict[str, Any]:

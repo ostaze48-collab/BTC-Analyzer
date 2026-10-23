@@ -6,6 +6,7 @@ from typing import Any, Awaitable, Callable
 
 from .analysis import enriched_snapshot
 from .brains import analyze_brains, layer_context
+from .config import settings
 from .cycle_models import cycle_model_context
 from .db import Database
 from .derivatives_intelligence import DerivativesIntelligence
@@ -69,7 +70,8 @@ class TradingEngine:
         features["exit"] = {
             "reason": closed_trade.get("exit_reason"), "price": closed_trade.get("exit_price"),
             "pnl": closed_trade.get("realized_pnl"), "mfe_pct": closed_trade.get("mfe_pct"),
-            "mae_pct": closed_trade.get("mae_pct"),
+            "mae_pct": closed_trade.get("mae_pct"), "leverage": closed_trade.get("leverage"),
+            "target_r": closed_trade.get("target_r"), "risk_budget": closed_trade.get("risk_budget"),
         }
         self.db.record_feature(int(closed_trade["id"]), "EXIT", features)
         self.learning_cache = self.db.learning_summary()
@@ -87,9 +89,6 @@ class TradingEngine:
             self.layers = layer_context(self.snapshots, self.cycle)
             self.regime = classify_market_regime(self.snapshots, self.layers)
 
-            # Network and derivatives intelligence deliberately have ZERO trading
-            # weight. They are logged with outcomes first and can only be promoted
-            # after separate out-of-sample incremental-edge validation.
             proposals = analyze_brains(self.snapshots, self.cycle)
             advisory = select_trade(proposals)
             advisory["timeframe_layers"] = self.layers
@@ -123,7 +122,9 @@ class TradingEngine:
 
             if not active and advisory["action"] in ("LONG", "SHORT") and advisory["winner"]:
                 context = {"regime": self.regime, "feature_vector": self._features(advisory)}
-                self.trade_manager.open_from_proposal(advisory["winner"], context=context)
+                opened = self.trade_manager.open_from_proposal(advisory["winner"], context=context)
+                if not opened and self.trade_manager.last_rejection:
+                    advisory["execution_block"] = self.trade_manager.last_rejection
 
             self.master = advisory
             self.last_analysis_at = datetime.now(timezone.utc).isoformat()
@@ -148,6 +149,7 @@ class TradingEngine:
 
     def state(self) -> dict[str, Any]:
         price = self.market.last_price
+        stats = self.db.stats()
         total_features = sum(int((s.get("feature_summary") or {}).get("count", 0)) for s in self.snapshots.values())
         return {
             "symbol": "BTCUSDT", "price": price, "connected": self.market.connected,
@@ -155,15 +157,26 @@ class TradingEngine:
             "timeframe_layers": self.layers, "market_regime": self.regime,
             "cycle_models": self.cycle, "network_intelligence": self.network,
             "derivatives_intelligence": self.derivatives, "master": self.master,
-            "active_trade": self.trade_manager.state(price), "stats": self.db.stats(),
+            "active_trade": self.trade_manager.state(price), "stats": stats,
             "learning": self.learning_cache,
+            "risk_engine": {
+                "mode": "ADAPTIVE_PAPER_RISK",
+                "max_total_drawdown_pct": round(settings.max_total_drawdown * 100, 2),
+                "soft_pause_drawdown_pct": round(settings.soft_pause_drawdown * 100, 2),
+                "max_paper_leverage": settings.max_paper_leverage,
+                "max_risk_per_trade_pct": round(settings.max_risk_per_trade * 100, 3),
+                "drawdown_from_start_pct": stats.get("drawdown_from_start_pct", 0.0),
+                "last_execution_block": self.trade_manager.last_rejection,
+                "real_execution_enabled": False,
+            },
             "feature_engine": {
                 "total_background_features": total_features,
                 "full_pool_server_side": True,
                 "selection_policy": "bounded_family_vote_then_walk_forward_validation",
             },
             "settings": {
-                "risk_per_trade_pct": 0.75, "paper_fee_pct_each_side": 0.10,
+                "risk_per_trade": "ADAPTIVE",
+                "paper_fee_pct_each_side": round(settings.paper_fee_rate * 100, 3),
                 "one_trade_only": True, "paper_only": True, "analysis_uses_closed_candles": True,
                 "intervals": list(self.market.candles.keys()), "pattern_engine": True, "learning_journal": True,
                 "cycle_models": True, "network_intelligence": "SHADOW_ONLY",
