@@ -15,6 +15,7 @@ from .cycle_walkforward import CycleWalkForward
 from .db import Database
 from .edge_lab import analyze_feature_edge
 from .engine import TradingEngine
+from .historical_validation import validate_historical_analogs
 from .incremental_edge import incremental_walkforward
 from .readiness import readiness_report
 from .version import APP_LABEL, APP_NAME, APP_VERSION
@@ -97,6 +98,7 @@ async def health():
         "incremental_walkforward": True,
         "historical_analogs": True,
         "historical_analogs_mode": "SHADOW_ONLY",
+        "historical_analogs_oos_validator": True,
         "feature_auto_promotion": False,
         "cycle_models": True,
         "readiness_gate": True,
@@ -157,6 +159,12 @@ async def api_incremental_edge(limit: int = 5000, max_features: int = 250):
 @app.get("/api/historical-analogs")
 async def api_historical_analogs():
     return engine.historical_analogs
+
+
+@app.get("/api/historical-validation")
+async def api_historical_validation(limit: int = 5000):
+    samples = db.edge_samples(max(1, min(limit, 20000)))
+    return validate_historical_analogs(samples)
 
 
 @app.get("/api/network")
