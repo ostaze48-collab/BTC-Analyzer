@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>BTC AI Trader V1</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header>
+    <div>
+      <h1>BTC AI TRADER <span>V1</span></h1>
+      <p>ثلاثة عقول مترابطة + Master Selector + صفقة تجريبية واحدة فقط</p>
+    </div>
+    <div class="pricebox">
+      <div id="conn" class="pill">CONNECTING</div>
+      <strong id="price">—</strong>
+      <small>BTCUSDT</small>
+    </div>
+  </header>
+
+  <main>
+    <section class="top-grid">
+      <article class="card master">
+        <div class="card-title">قرار MASTER</div>
+        <div id="masterAction" class="decision wait">BOOTING</div>
+        <div id="masterMessage" class="muted">تحميل البيانات...</div>
+        <div id="winner"></div>
+      </article>
+
+      <article class="card">
+        <div class="card-title">رأس المال التجريبي</div>
+        <div class="metric-row"><span>البداية</span><b id="startCapital">$1,000</b></div>
+        <div class="metric-row"><span>الحالي</span><b id="capital">—</b></div>
+        <div class="metric-row"><span>صافي P/L</span><b id="netPnl">—</b></div>
+        <div class="metric-row"><span>Win rate</span><b id="winRate">—</b></div>
+      </article>
+
+      <article class="card">
+        <div class="card-title">قفل التنفيذ</div>
+        <div id="tradeLock" class="lock open">🔓 لا توجد صفقة مفتوحة</div>
+        <div class="metric-row"><span>المخاطرة/صفقة</span><b>0.75%</b></div>
+        <div class="metric-row"><span>أقصى صفقة نشطة</span><b>1</b></div>
+        <div class="metric-row"><span>الوضع</span><b>PAPER ONLY</b></div>
+      </article>
+    </section>
+
+    <section class="card brain-card">
+      <div class="card-title">العقول الثلاثة</div>
+      <div id="brains" class="brains"></div>
+    </section>
+
+    <section class="card chart-card">
+      <div class="chart-head">
+        <div class="card-title">الشارت الحي</div>
+        <div id="tfButtons" class="tf-buttons">
+          <button data-tf="1m">1m</button>
+          <button class="active" data-tf="5m">5m</button>
+          <button data-tf="15m">15m</button>
+          <button data-tf="1h">1H</button>
+          <button data-tf="4h">4H</button>
+        </div>
+      </div>
+      <div id="chart"></div>
+      <div class="attribution">Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView Lightweight Charts™</a></div>
+    </section>
+
+    <section class="bottom-grid">
+      <article class="card">
+        <div class="card-title">الصفقة النشطة</div>
+        <div id="activeTrade" class="empty">لا توجد صفقة مفتوحة.</div>
+      </article>
+
+      <article class="card">
+        <div class="card-title">أداء النظام</div>
+        <div class="metric-row"><span>Trades</span><b id="trades">0</b></div>
+        <div class="metric-row"><span>Profit Factor</span><b id="pf">0</b></div>
+        <div class="metric-row"><span>Max Drawdown</span><b id="dd">0%</b></div>
+        <button id="resetBtn" class="danger">تصفير المحاكاة</button>
+      </article>
+    </section>
+
+    <section class="card">
+      <div class="card-title">آخر الصفقات</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>#</th><th>العقل</th><th>الاتجاه</th><th>الدخول</th><th>الخروج</th><th>P/L</th><th>السبب</th></tr></thead>
+          <tbody id="tradesBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <div class="notice">
+      V1 مخصص للمحاكاة والبحث فقط. لا يرسل أوامر إلى أي بورصة ولا يستخدم مفاتيح تداول.
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5.2.1/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

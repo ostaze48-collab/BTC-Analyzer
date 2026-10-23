@@ -1,126 +1,164 @@
-# BTC Analyzer V2.8 — FAST SCALP + Fixed $1,000 Capital
+# BTC AI Trader V1
 
-V2.8 adds a fourth trading lane while preserving the existing research methodology.
-No new technical indicator is added.
+نسخة بحث ومحاكاة (Paper Trading) لنظام BTCUSDT متعدد العقول.
 
-## Permanent Paper Capital
+## ما الذي تنفذه V1؟
 
-The MAIN Paper account and all independent Lane-Lab accounts are fixed at:
+- بيانات BTCUSDT حية من Binance public market-data endpoints، بدون API key.
+- إعادة اتصال تلقائية + أكثر من endpoint رسمي احتياطي عند تعطل المصدر.
+- 5 فريمات: `1m`, `5m`, `15m`, `1h`, `4h`.
+- ثلاثة عقول مترابطة:
+  - SCALP
+  - INTRADAY
+  - SWING
+- Master Selector:
+  - Safety Score
+  - Profit Score
+  - Expected Value (EV)
+  - Risk/Reward
+  - Consensus
+  - Risk Gate
+- صفقة واحدة فقط في أي لحظة.
+- رأس مال افتراضي ابتدائي: `$1,000`.
+- مخاطرة أولية: `0.75%` من رأس المال لكل صفقة.
+- TP1 / TP2 / TP3.
+- TP1 يغلق 30% وينقل SL إلى Break-even.
+- TP2 يغلق 40% وينقل SL إلى TP1.
+- TP3 يغلق الباقي.
+- Early Exit عندما يظهر إجماع قوي من عقلين بعكس الصفقة المفتوحة.
+- SQLite لتسجيل الصفقات والنتائج.
+- واجهة عربية متجاوبة للهاتف والكمبيوتر.
+- TradingView Lightweight Charts 5.2.1 لعرض الشموع والخطوط.
 
-`$1,000.00`
+> **مهم:** هذه النسخة لا تتصل بحساب تداول ولا تنفذ أموالًا حقيقية.
 
-The Dashboard no longer provides a capital-change control.
-The capital API also rejects manual changes.
+---
 
-When V2.8 starts on a persistent database whose ACTIVE experiment used another
-starting balance, that experiment is archived once and a fresh $1,000 experiment
-is created. Historical experiments are preserved.
+## هيكل المشروع
 
-If an old experiment had an open trade when the fixed-capital migration occurred,
-that trade is stored as RESET with zero P&L rather than being misclassified as a
-market win/loss.
+```text
+btc_ai_trader_v1/
+├─ run.py
+├─ requirements.txt
+├─ .env.example
+├─ README.md
+├─ app/
+│  ├─ config.py
+│  ├─ db.py
+│  ├─ indicators.py
+│  ├─ market.py
+│  ├─ brains.py
+│  ├─ master.py
+│  ├─ trade_manager.py
+│  ├─ engine.py
+│  ├─ main.py
+│  └─ static/
+│     ├─ index.html
+│     ├─ app.js
+│     └─ styles.css
+└─ tests/
+   └─ test_master.py
+```
 
-Keep Render persistence enabled:
+## التشغيل على Windows / macOS / Linux
 
-`DATA_DIR=/var/data`
+### 1) ثبّت Python 3.11 أو أحدث
 
-## Four Trading Lanes
+### 2) افتح Terminal داخل المجلد
 
-V2.8 measures:
+```bash
+python -m venv .venv
+```
 
-1. FAST_SCALP
-2. SCALP
-3. INTRADAY
-4. SWING
+Windows:
 
-The MAIN account still allows only ONE open trade globally. If several lanes are
-actionable at once, the strongest Setup Score wins, with Available R:R as the
-tie-breaker.
+```bash
+.venv\Scripts\activate
+```
 
-The Lane Comparison Lab tests all four lanes independently so the MAIN account's
-one-trade rule does not bias the comparison.
+macOS/Linux:
 
-## FAST SCALP
+```bash
+source .venv/bin/activate
+```
 
-FAST_SCALP is intentionally simpler and faster than normal SCALP.
+### 3) ثبّت المكتبات
 
-Primary logic:
-- 3m = micro-direction
-- 1m = execution
-- 5m = short-term countertrend guard
-- 15m = secondary countertrend guard only
-- 1m / 3m volume must not be strongly adverse
-- lightweight Price Action confluence / veto
+```bash
+pip install -r requirements.txt
+```
 
-It does NOT require the full higher-timeframe synchronization demanded by normal
-SCALP. This makes it capable of generating more frequent opportunities.
+### 4) شغّل النظام
 
-### FAST_SCALP risk geometry
+```bash
+python run.py
+```
 
-Default fallback geometry is deliberately compact:
-- shorter stop than normal SCALP
-- TP1 approximately 0.85R
-- TP2 approximately 1.25R
-- minimum Available R:R gate = 1.00R
-- expiry = 15 minutes
+ثم افتح:
 
-When a trustworthy 1m structural support/resistance/trendline exists, the existing
-Structure-Aware engine may use it. Otherwise FAST_SCALP uses ATR_FALLBACK.
+```text
+http://127.0.0.1:8000
+```
 
-### Consecutive opportunities
+ولفتحه من هاتف على نفس شبكة Wi‑Fi، استخدم IP الكمبيوتر مثل:
 
-A FAST_SCALP opportunity is tied to the latest CLOSED 1m candle.
+```text
+http://192.168.1.10:8000
+```
 
-Example:
-- closed 1m bar 18:31 -> FAST_SCALP opportunity A
-- repeated 30-second engine cycle on the same bar -> still opportunity A
-- closed 1m bar 18:32 -> opportunity B
+قد تحتاج السماح لـPython عبر Windows Firewall.
 
-This prevents duplicate entries within one minute while allowing a new fast setup
-on the next closed candle after the previous trade has finished.
+---
 
-## FAST_SCALP is not assumed to be profitable
+## منطق الاختيار
 
-It is measured independently using the same $1,000 starting capital and the same
-configured risk-per-trade percentage. The system compares it against SCALP,
-INTRADAY and SWING using:
+كل عقل يصنع Trade Proposal. ثم يقوم Master بما يلي:
 
-- closed trades
-- W/L and Win Rate
-- Net P&L
-- Return %
-- Expectancy R
-- Profit Factor
-- Max Drawdown
-- MFE / MAE
-- Capture Efficiency
-- Quality Score
-- Evidence / Reliability
-- performance by Market Regime
-- Price Action alignment
-- Structure-Aware vs ATR execution plan
+1. حساب Safety Score.
+2. حساب Profit Score.
+3. التحقق من EV > 0.
+4. التحقق من R:R.
+5. التحقق من مسافة SL.
+6. إدخال توافق العقول في التقييم.
+7. استبعاد أي صفقة لا تجتاز Risk Gate.
+8. اختيار أعلى Risk-adjusted opportunity.
+9. فتح صفقة واحدة فقط.
+10. قفل أي Entries جديدة حتى إغلاق الصفقة.
 
-A provisional best lane still requires at least 10 closed trades. Thirty or more
-closed trades are treated as higher research evidence.
+## إعدادات مهمة
 
-## Existing V2.7 features retained
+يمكن تعديل القيم كـEnvironment Variables:
 
-- Support / Resistance Zones 2.0
-- Trendlines and Channels
-- Candlestick pattern candidates
-- classical chart-pattern candidates
-- Pattern lifecycle: CANDIDATE / CONFIRMED / RETESTED / FAILED / ACTIVE
-- Structure-Aware SL / TP with ATR fallback
-- Price Action confluence and conservative multi-family veto
-- Opportunity IDs
-- MFE / MAE and Capture Efficiency
-- Equity Curve, Drawdown and Expectancy
-- Experiment history
-- SCALP A/B/C/D shadow research
-- closed-candle analysis
-- one MAIN trade globally
+```text
+PAPER_START_CAPITAL=1000
+RISK_PER_TRADE=0.0075
+PAPER_FEE_RATE=0.001
+MIN_CONFIDENCE=65
+MIN_SAFETY_SCORE=68
+MIN_RR=1.5
+MAX_STOP_PCT=2.5
+```
 
-## Important
+## حدود V1
 
-V2.8 is Paper / Research only. It sends no real orders and no observed Paper result
-guarantees future profitability.
+هذه النسخة الأولى **لا** تحتوي بعد على:
+
+- ML/FreqAI training.
+- Order Blocks / FVG الكامل.
+- رسم Trendlines تفاعلية آلية.
+- Backtester تاريخي مستقل.
+- تنفيذ حقيقي في Exchange.
+- أخبار / Sentiment / Order Book.
+
+الهدف من V1 هو أولًا التأكد من أن:
+`Market Data → 3 Brains → Master → One Trade → Trade Management → Journal`
+تعمل كنظام واحد بثبات.
+
+## الخطوة المقترحة لـ V1.1
+
+- Backtesting لبيانات تاريخية.
+- تسجيل MFE / MAE.
+- مقارنة أداء SCALP / INTRADAY / SWING.
+- تحسين أوزان Master من نتائج فعلية.
+- إضافة FVG / BOS / CHoCH بشكل أعمق.
+- إضافة Replay Mode سريع لاختبار آلاف الصفقات.
