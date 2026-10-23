@@ -20,6 +20,7 @@ from .full_target_walkforward import run_full_target_walkforward
 from .incremental_edge import incremental_walkforward
 from .live_shadow_target import validate_live_shadow_target
 from .readiness import readiness_report
+from .research_history import ResearchHistoryStore
 from .target_advisor import build_historical_target_advisor_from_summary
 from .target_evidence_gate import target_evidence_gate
 from .target_policy_validation import validate_target_policy
@@ -61,6 +62,7 @@ hub = Hub()
 engine: TradingEngine | None = None
 backtester = BacktestEngine()
 cycle_validator = CycleWalkForward()
+research_history = ResearchHistoryStore(settings.db_path)
 last_execution_replay: dict[str, Any] | None = None
 full_target_results: dict[str, dict[str, Any]] = {}
 full_target_running: set[str] = set()
@@ -70,10 +72,12 @@ full_target_running: set[str] = set()
 async def lifespan(app: FastAPI):
     global engine
     db.init()
+    research_history.init()
     engine = TradingEngine(db, hub.broadcast)
     await engine.start()
     yield
     await engine.stop()
+    research_history.close()
 
 
 app = FastAPI(title=f"{APP_NAME} {APP_LABEL}", version=APP_VERSION, lifespan=lifespan)
@@ -120,6 +124,8 @@ async def health():
         "target_evidence_gate_mode": "RESEARCH_PROMOTION_ONLY",
         "unified_research_readiness": True,
         "unified_readiness_mode": "HARD_GATE_AGGREGATION",
+        "research_evidence_history": True,
+        "research_evidence_history_mode": "PERSISTENT_MATERIAL_SNAPSHOTS",
         "target_policy_auto_apply": False,
         "long_historical_memory": True,
         "historical_archive_mode": "LAZY_SHADOW_ONLY",
@@ -162,6 +168,22 @@ def _readiness() -> dict[str, Any]:
         metrics = dict(last_execution_replay.get("metrics") or {})
         exec_evidence = {**metrics, "validation_type": "SHORT_WINDOW_REPLAY"}
     return readiness_report(db.stats(), db.learning_summary(), exec_evidence, cycle_primary)
+
+
+def _unified_readiness_report(limit: int = 5000, record: bool = True) -> dict[str, Any]:
+    safe_limit = max(1, min(int(limit), 20000))
+    samples = db.edge_samples(safe_limit)
+    trades = db.recent_trades(safe_limit)
+    edge = analyze_feature_edge(samples)
+    incremental = incremental_walkforward(samples, max_features=500)
+    live = validate_live_shadow_target(samples, trades)
+    target_gate = target_evidence_gate(full_target_results, live)
+    report = unified_research_readiness(_readiness(), target_gate, edge, incremental)
+    if record:
+        saved = research_history.record(report, db.stats(), APP_VERSION, min_interval_seconds=900)
+        report["history_recorded"] = bool(saved.get("recorded"))
+        report["history_snapshot_id"] = saved.get("id")
+    return report
 
 
 @app.get("/api/readiness")
@@ -230,14 +252,13 @@ async def api_target_evidence_gate(limit: int = 5000):
 
 @app.get("/api/unified-readiness")
 async def api_unified_readiness(limit: int = 5000):
-    safe_limit = max(1, min(limit, 20000))
-    samples = db.edge_samples(safe_limit)
-    trades = db.recent_trades(safe_limit)
-    edge = analyze_feature_edge(samples)
-    incremental = incremental_walkforward(samples, max_features=500)
-    live = validate_live_shadow_target(samples, trades)
-    target_gate = target_evidence_gate(full_target_results, live)
-    return unified_research_readiness(_readiness(), target_gate, edge, incremental)
+    return _unified_readiness_report(limit, record=True)
+
+
+@app.get("/api/research-history")
+async def api_research_history(limit: int = 240):
+    _unified_readiness_report(5000, record=True)
+    return research_history.report(max(2, min(int(limit), 1000)))
 
 
 def _normalize_brain(brain: str) -> str:
@@ -362,7 +383,9 @@ async def api_cycle_validation(years: int = 6):
 @app.post("/api/reset")
 async def api_reset():
     try:
-        return engine.reset()
+        result = engine.reset()
+        research_history.clear()
+        return result
     except RuntimeError as exc:
         raise HTTPException(409, str(exc)) from exc
 
