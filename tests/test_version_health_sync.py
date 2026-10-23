@@ -16,6 +16,8 @@ class VersionHealthSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(data["target_evidence_gate"])
         self.assertTrue(data["unified_research_readiness"])
         self.assertEqual(data["unified_readiness_mode"], "HARD_GATE_AGGREGATION")
+        self.assertTrue(data["research_evidence_history"])
+        self.assertEqual(data["research_evidence_history_mode"], "PERSISTENT_MATERIAL_SNAPSHOTS")
         self.assertFalse(data["target_policy_auto_apply"])
         self.assertFalse(data["real_execution_enabled"])
 
