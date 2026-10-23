@@ -20,6 +20,7 @@ from .full_target_walkforward import run_full_target_walkforward
 from .incremental_edge import incremental_walkforward
 from .live_shadow_target import validate_live_shadow_target
 from .readiness import readiness_report
+from .research_history import ResearchHistoryStore
 from .strict_paper_review import strict_paper_review
 from .target_advisor import build_historical_target_advisor_from_summary
 from .target_evidence_gate import target_evidence_gate
@@ -62,6 +63,7 @@ hub = Hub()
 engine: TradingEngine | None = None
 backtester = BacktestEngine()
 cycle_validator = CycleWalkForward()
+research_history = ResearchHistoryStore(settings.db_path)
 last_execution_replay: dict[str, Any] | None = None
 full_target_results: dict[str, dict[str, Any]] = {}
 full_target_running: set[str] = set()
@@ -71,10 +73,12 @@ full_target_running: set[str] = set()
 async def lifespan(app: FastAPI):
     global engine
     db.init()
+    research_history.init()
     engine = TradingEngine(db, hub.broadcast)
     await engine.start()
     yield
     await engine.stop()
+    research_history.close()
 
 
 app = FastAPI(title=f"{APP_NAME} {APP_LABEL}", version=APP_VERSION, lifespan=lifespan)
@@ -123,6 +127,8 @@ async def health():
         "unified_readiness_mode": "HARD_GATE_AGGREGATION",
         "strict_paper_review": True,
         "strict_paper_review_mode": "OVERLAPPING_30_60_100_DIAGNOSTIC",
+        "research_evidence_history": True,
+        "research_evidence_history_mode": "PERSISTENT_MATERIAL_SNAPSHOTS_WITH_STRICT_PAPER",
         "target_policy_auto_apply": False,
         "long_historical_memory": True,
         "historical_archive_mode": "LAZY_SHADOW_ONLY",
@@ -177,6 +183,18 @@ def _unified_snapshot(limit: int = 5000) -> tuple[dict[str, Any], list[dict[str,
     target_gate = target_evidence_gate(full_target_results, live)
     unified = unified_research_readiness(_readiness(), target_gate, edge, incremental)
     return unified, samples
+
+
+def _research_bundle(limit: int = 5000, record: bool = True) -> tuple[dict[str, Any], dict[str, Any]]:
+    unified, samples = _unified_snapshot(limit)
+    strict = strict_paper_review(unified, samples)
+    if record:
+        saved = research_history.record(unified, strict, db.stats(), APP_VERSION, min_interval_seconds=900)
+        unified["history_recorded"] = bool(saved.get("recorded"))
+        unified["history_snapshot_id"] = saved.get("id")
+        strict["history_recorded"] = bool(saved.get("recorded"))
+        strict["history_snapshot_id"] = saved.get("id")
+    return unified, strict
 
 
 @app.get("/api/readiness")
@@ -245,14 +263,20 @@ async def api_target_evidence_gate(limit: int = 5000):
 
 @app.get("/api/unified-readiness")
 async def api_unified_readiness(limit: int = 5000):
-    unified, _ = _unified_snapshot(limit)
+    unified, _ = _research_bundle(limit, record=True)
     return unified
 
 
 @app.get("/api/strict-paper-review")
 async def api_strict_paper_review(limit: int = 5000):
-    unified, samples = _unified_snapshot(limit)
-    return strict_paper_review(unified, samples)
+    _, strict = _research_bundle(limit, record=True)
+    return strict
+
+
+@app.get("/api/research-history")
+async def api_research_history(limit: int = 240):
+    _research_bundle(5000, record=True)
+    return research_history.report(max(2, min(int(limit), 1000)))
 
 
 def _normalize_brain(brain: str) -> str:
@@ -310,12 +334,8 @@ async def api_historical_archive(brain: str | None = None):
         return engine.historical_archive.state(brain.upper())
     return {
         "current": engine.archive_state,
-        "brains": {
-            name: engine.historical_archive.state(name)
-            for name in ("SCALP", "INTRADAY", "SWING")
-        },
-        "mode": "LAZY_SHADOW_ONLY",
-        "weight_in_master": 0.0,
+        "brains": {name: engine.historical_archive.state(name) for name in ("SCALP", "INTRADAY", "SWING")},
+        "mode": "LAZY_SHADOW_ONLY", "weight_in_master": 0.0,
     }
 
 
@@ -377,7 +397,9 @@ async def api_cycle_validation(years: int = 6):
 @app.post("/api/reset")
 async def api_reset():
     try:
-        return engine.reset()
+        result = engine.reset()
+        research_history.clear()
+        return result
     except RuntimeError as exc:
         raise HTTPException(409, str(exc)) from exc
 

@@ -1,62 +1,67 @@
-# BTC AI Trader V1.25
+# BTC AI Trader V1.26
 
 منظومة بحث ومحاكاة **Paper Trading فقط** لتحليل BTCUSDT عبر ثلاثة عقول مترابطة: `SCALP` و`INTRADAY` و`SWING`، ثم اختيار صفقة واحدة بواسطة `MASTER`.
 
-> التداول الحقيقي معطّل. لا توجد في V1.25 أي حالة أو درجة تسمح تلقائيًا باستخدام أموال حقيقية أو تغيير الأهداف الفعلية.
+> التداول الحقيقي معطّل. لا توجد في V1.26 أي حالة أو Trend أو Research Score تسمح تلقائيًا باستخدام أموال حقيقية أو تغيير الأهداف الفعلية.
 
-## ما الجديد في V1.25؟
+## ما الجديد في V1.26؟
 
-V1.25 تضيف **Strict Paper Review Protocol** بعد V1.24 Unified Research Readiness. الهدف هو اكتشاف ما إذا كان أداء Paper يبدو مستقرًا الآن، أو أن آخر الصفقات بدأت تتدهور رغم أن المتوسط الطويل ما زال جيدًا.
+V1.26 تضيف **Research Evidence History** فوق V1.25 Strict Paper Review. بدل الاعتماد على لقطة واحدة من Unified Readiness أو نتيجة لحظية من Strict Paper Review، تحفظ المنظومة تاريخًا زمنيًا مضغوطًا يوضح هل قوة الأدلة تتحسن، تستقر، أم تتراجع.
 
-### النوافذ التشخيصية
+كل Snapshot تحفظ:
 
-يتم فحص آخر:
+- نسخة التطبيق.
+- Unified Research Stage وResearch Score.
+- عدد Mandatory Gates الناجحة والفاشلة.
+- Core Readiness status/score.
+- Target Evidence status/pass.
+- Incremental Feature OOS support.
+- Strict Paper Review status/pass وعدد Gates الناجحة.
+- عدد صفقات Paper وProfit Factor وMax Drawdown.
+- Paper-only / real-execution eligibility flags.
 
-- `30` صفقة Paper: Mean R ≥ `0.05`، Profit Factor ≥ `1.10`، Max Drawdown ≤ `5R`، Net R > 0.
-- `60` صفقة Paper: Mean R ≥ `0.07`، Profit Factor ≥ `1.15`، Max Drawdown ≤ `7R`، Net R > 0.
-- `100` صفقة Paper: Mean R ≥ `0.08`، Profit Factor ≥ `1.20`، Max Drawdown ≤ `10R`، Net R > 0.
+### متى تُحفظ Snapshot؟
 
-كل النتائج تُقاس بوحدة `R` باستخدام `realized_pnl / risk_budget` من الصفقات المغلقة.
+- أي تغير مادي في Stage / Score / Gates / Target / Feature / Strict Paper / عدد الصفقات يُحفظ فورًا.
+- إذا لم يتغير شيء مهم، يمنع throttle الافتراضي تكرار نفس Snapshot خلال نحو 15 دقيقة.
+- يحتفظ المخزن بحد أقصى يقارب 5000 Snapshot.
+- `Reset` يمسح Research Evidence History أيضًا حتى تبدأ حقبة بحثية جديدة ولا تختلط نتائج قبل التصفير بما بعده.
 
-**مهم:** نوافذ 30/60/100 متداخلة، لذلك هي **تشخيص للاستقرار والتدهور وليست عينات OOS مستقلة**. لا يجوز اعتبار نجاحها ثلاثة اختبارات مستقلة.
+## Evidence Trend
 
-### Recent Decay Gate
+V1.26 تصنف اتجاه الأدلة إلى:
 
-حتى لا يخفي التاريخ الطويل تدهورًا حديثًا، يجب أن يكون:
+- `INSUFFICIENT_HISTORY`: أقل من 3 Snapshots؛ لا تدعي وجود Trend ناضج.
+- `IMPROVING`: تحسن مادي في Stage أو Mandatory Gates أو Research Score، أو وصول Strict Paper إلى PASS.
+- `STABLE`: الأدلة مستقرة دون تغير جوهري.
+- `REGRESSING`: آخر خطوة تراجعت في Stage/Gates/Score أو انتقل Strict Paper من `PASSED` إلى `BLOCKED`.
 
-- Mean R لآخر 30 صفقة موجبًا.
-- Mean R لآخر 100 صفقة موجبًا.
-- Mean R لآخر 30 صفقة لا يقل عن `50%` من Mean R لآخر 100 صفقة.
+**Trend هنا اتجاه قوة الأدلة وثبات Paper فقط، وليس BUY/SELL ولا توقعًا للسعر.**
 
-إذا تدهورت آخر 30 صفقة بشدة، يمنع V1.25 المرور حتى لو كانت نافذة 100 صفقة ما زالت تبدو جيدة.
+وتعرض الطبقة أيضًا:
 
-### شروط الدخول إلى Strict Paper Review
+- Current Stage وBest Stage.
+- Current Strict Paper status وStrict pass rate.
+- Stage/Strict regressions.
+- Research Score الحالي/الأول/المتوسط/الأفضل/الأسوأ.
+- Delta من أول Snapshot ومن السابقة.
+- Mandatory Gates الحالية وتغيرها منذ البداية.
+- Strict Gates الحالية.
+- Target pass rate وFeature support rate.
+- عدد صفقات Paper الحالية وطول الفترة المغطاة.
 
-لا يكفي وجود 100 صفقة فقط. يجب أيضًا أن تكون V1.24 أعادت:
+## Strict Paper Review Protocol V1.25
 
-`STRICT_PAPER_REVIEW_CANDIDATE`
+يبقى V1.25 كما هو دون استبدال:
 
-مع:
+- آخر `30` صفقة: Mean R ≥ `0.05`، PF ≥ `1.10`، Max DD ≤ `5R`، Net R > 0.
+- آخر `60` صفقة: Mean R ≥ `0.07`، PF ≥ `1.15`، Max DD ≤ `7R`، Net R > 0.
+- آخر `100` صفقة: Mean R ≥ `0.08`، PF ≥ `1.20`، Max DD ≤ `10R`، Net R > 0.
+- Recent Decay Gate يمنع التاريخ الطويل من إخفاء ضعف آخر 30 صفقة.
 
-- `strict_paper_review_allowed = true`
-- `paper_only = true`
-- `automatic_real_execution = false`
-- `real_execution_eligibility = false`
-- `live_execution_enabled = false`
+النوافذ 30/60/100 **متداخلة وتشخيصية فقط وليست OOS مستقلة**.
 
-أي إشارة تشغيل حقيقي تكسر `paper_only_interlock` وتمنع المرور.
-
-## نتيجة V1.25
-
-إذا فشل أي Gate:
-
-`STRICT_PAPER_REVIEW_BLOCKED`
-
-والمرحلة التالية:
-
-`CONTINUE_PAPER_COLLECTION`
-
-إذا نجحت جميع الـGates:
+إذا نجحت جميع Gates تكون النتيجة:
 
 `STRICT_PAPER_REVIEW_PASSED`
 
@@ -73,18 +78,17 @@ V1.25 تضيف **Strict Paper Review Protocol** بعد V1.24 Unified Research Re
 - `target_auto_apply = false`
 - `guarantee = NONE`
 
-أي أن V1.25 لا تفتح التداول الحقيقي؛ بل تسمح فقط بمراقبة Paper أطول وأكثر صرامة.
-
 ## Unified Research Readiness V1.24
 
-V1.24 تجمع الأدلة الرئيسية في حكم واحد:
-
-1. Core Readiness: Paper sample + genuine chronological OOS + PF/Avg R/Return + Drawdown + Brain×Regime robustness + Cycle holdout.
-2. Target Evidence: Full Historical Target Walk-Forward + Frozen-entry Live Shadow.
-3. Feature Research: Feature Edge Lab + Incremental Feature Walk-Forward كدليل داعم، وليس شرطًا يجبر النظام على overfitting.
-4. Execution Interlock: real execution يجب أن يبقى OFF.
+V1.24 تجمع Core Readiness + Target Evidence + Execution Interlock في Mandatory Gates، وتعرض Feature Edge / Incremental Walk-Forward كأدلة داعمة مستقلة لتقليل ضغط overfitting.
 
 `Research Score` معلوماتي فقط ولا يمكنه تجاوز Hard Gate فاشل.
+
+أعلى حالة Unified هي:
+
+`STRICT_PAPER_REVIEW_CANDIDATE`
+
+وهي تسمح فقط بالدخول إلى Strict Paper Review، لا بالتداول الحقيقي.
 
 ## طبقات الإثبات الحالية
 
@@ -100,6 +104,7 @@ V1.24 تجمع الأدلة الرئيسية في حكم واحد:
 10. Core Readiness Gate.
 11. Unified Research Readiness V1.24.
 12. Strict Paper Review Protocol V1.25.
+13. **Research Evidence History V1.26**.
 
 ## السوق والفريمات
 
@@ -115,7 +120,7 @@ V1.24 تجمع الأدلة الرئيسية في حكم واحد:
 - أهداف Risk Engine الحالية من `1R` حتى `5R`.
 - Soft Pause قبل حد الخسارة الكلي.
 - Hard model drawdown limit = `25%` من رأس المال الابتدائي.
-- Target Advisor / Feature research / Historical Analog layers لا تغيّر التنفيذ تلقائيًا.
+- Historical Target / Feature research / Strict Paper / Research History لا تغيّر التنفيذ تلقائيًا.
 
 ## واجهة الهاتف
 
@@ -133,10 +138,12 @@ V1.24 تجمع الأدلة الرئيسية في حكم واحد:
 - Frozen-entry Live Shadow Target.
 - Target Evidence Consensus Gate.
 - Unified Research Readiness.
-- Strict Paper Review مع نوافذ 30/60/100، Recent Decay، Brain/Regime concentration، وكل أسباب المنع.
+- Strict Paper Review في `v35.js`.
+- **Research Evidence History في `v36.js`** مع Trend + Timeline + Strict Paper history.
 
 ## API
 
+- `GET /api/research-history?limit=240`
 - `GET /api/strict-paper-review`
 - `GET /api/unified-readiness`
 - `GET /api/target-evidence-gate`
@@ -149,17 +156,19 @@ V1.24 تجمع الأدلة الرئيسية في حكم واحد:
 GitHub Actions يفحص:
 
 - Python compile.
-- JavaScript syntax حتى `v35.js`.
-- Unit tests لـStrict Paper Review وUnified Readiness وTarget Evidence.
-- كشف recent degradation حتى إذا كان التاريخ الطويل جيدًا.
-- منع نقص العينة من المرور.
-- منع أي real-execution flag من تجاوز Paper interlock.
+- JavaScript syntax حتى `v36.js` مع بقاء `v35.js` للـStrict Paper Review.
+- Unit tests لـResearch Evidence History + Strict Paper Review + Unified Readiness.
+- منع ادعاء Trend بعينتين فقط.
+- اعتبار تحول Strict Paper من PASS إلى BLOCKED تراجعًا.
+- منع Snapshot مكرر داخل نافذة throttle مع حفظ أي تغير مادي فورًا.
+- إمكانية إعادة فتح ResearchHistoryStore بأمان بعد إغلاق connection.
 - No-lookahead / STOP_FIRST / Frozen-entry logic.
 - تشغيل التطبيق و`/health`.
 - مزامنة رقم النسخة والواجهة والقدرات.
+- بقاء real execution معطّلًا.
 
 ## المبدأ
 
-`Market Data → Multi-Timeframe Analysis → 3 Brains → MASTER → Adaptive Risk → Historical Memory → OOS Target Validation → Live Shadow → Target Evidence Gate → Unified Research Readiness → Strict Paper Review → Extended Paper Observation`
+`Market Data → Multi-Timeframe Analysis → 3 Brains → MASTER → Adaptive Risk → Historical Memory → OOS Validation → Live Shadow → Target Evidence Gate → Unified Research Readiness → Strict Paper Review → Research Evidence History → Extended Paper Observation`
 
-الهدف ليس نسخة تدّعي الربح، بل منظومة تستطيع أن **تثبت أين لديها Edge، تكتشف تدهورها مبكرًا، وترفض الانتقال إلى مرحلة أخطر عندما يكون الدليل غير كافٍ**.
+الهدف ليس نسخة تدّعي الربح، بل منظومة تستطيع أن **تثبت أين لديها Edge، تكتشف التدهور الحديث، وتراقب هل جودة الأدلة نفسها ثابتة بمرور الزمن قبل أي انتقال أخطر**.

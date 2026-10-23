@@ -18,6 +18,8 @@ class VersionHealthSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["unified_readiness_mode"], "HARD_GATE_AGGREGATION")
         self.assertTrue(data["strict_paper_review"])
         self.assertEqual(data["strict_paper_review_mode"], "OVERLAPPING_30_60_100_DIAGNOSTIC")
+        self.assertTrue(data["research_evidence_history"])
+        self.assertEqual(data["research_evidence_history_mode"], "PERSISTENT_MATERIAL_SNAPSHOTS_WITH_STRICT_PAPER")
         self.assertFalse(data["target_policy_auto_apply"])
         self.assertFalse(data["real_execution_enabled"])
 
