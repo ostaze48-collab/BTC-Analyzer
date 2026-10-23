@@ -30,6 +30,8 @@ def _brain_regime_history(learning: dict[str, Any], brain: str, regime: str) -> 
 
 
 def _shadow_score(proposal: dict[str, Any], analog: dict[str, Any], history: dict[str, Any]) -> dict[str, Any]:
+    if proposal.get("direction") not in ("LONG", "SHORT"):
+        return {"score": 0.0, "grade": "WAIT", "master_weight": 0.0}
     components: list[tuple[float, float]] = []
     if analog.get("status") == "READY":
         matches = max(0, int(analog.get("matches", 0) or 0)); sample = min(1.0, matches / 18.0)
@@ -90,20 +92,25 @@ class CandidateEvidenceMatrix:
         key = self._key(proposals, regime, archives); now = time.monotonic()
         if not force and key == self._last_key and now - self._last_at < self.ttl_seconds: return self.state
         if self._task and not self._task.done(): return self.state
-        directional = [p for p in proposals if p.get("direction") in ("LONG", "SHORT")]
-        if not directional:
-            self.state = {"status": "NO_DIRECTIONAL_CANDIDATES", "mode": "ALL_BRAINS_SHADOW", "master_weight": 0.0, "brains": {}}; self._last_key, self._last_at = key, now; return self.state
+        if not proposals:
+            self.state = {"status": "NO_BRAIN_PROPOSALS", "mode": "ALL_BRAINS_SHADOW", "master_weight": 0.0, "brains": {}}; self._last_key, self._last_at = key, now; return self.state
 
         async def runner():
             rows: dict[str, Any] = {}
-            for p in directional:
+            for p in proposals:
                 brain = str(p.get("brain"))
-                try:
-                    analog = await asyncio.to_thread(analyze_historical_analogs, p, snapshots, layers, regime, histories.get(brain, {}))
-                except Exception as exc:
-                    analog = {"status": "ERROR", "error": str(exc)[:160], "matches": 0, "weight_in_master": 0.0}
+                if p.get("direction") in ("LONG", "SHORT"):
+                    try:
+                        analog = await asyncio.to_thread(analyze_historical_analogs, p, snapshots, layers, regime, histories.get(brain, {}))
+                    except Exception as exc:
+                        analog = {"status": "ERROR", "error": str(exc)[:160], "matches": 0, "weight_in_master": 0.0}
+                else:
+                    analog = {"status": "NO_DIRECTIONAL_SETUP", "matches": 0, "weight_in_master": 0.0}
                 rows[brain] = build_candidate_row(p, analog, learning, regime, archives.get(brain, {}))
-            ordered = sorted(rows.values(), key=lambda r: (r.get("evidence_score", 0), r.get("final_score", 0)), reverse=True)
+            for brain in BRAINS:
+                rows.setdefault(brain, build_candidate_row({"brain": brain, "direction": "WAIT", "risk_gate": "REJECTED"}, {"status": "NO_PROPOSAL", "matches": 0}, learning, regime, archives.get(brain, {})))
+            eligible = [r for r in rows.values() if r.get("direction") in ("LONG", "SHORT")]
+            ordered = sorted(eligible, key=lambda r: (r.get("evidence_score", 0), r.get("final_score", 0)), reverse=True)
             self.state = {
                 "status": "READY", "mode": "ALL_BRAINS_SHADOW", "master_weight": 0.0, "regime": regime.get("regime"),
                 "brains": rows, "evidence_ranking": [r["brain"] for r in ordered],
