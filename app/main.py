@@ -18,6 +18,7 @@ from .edge_lab import analyze_feature_edge
 from .engine import TradingEngine
 from .incremental_edge import incremental_walkforward
 from .readiness import readiness_report
+from .system_manifest import manifest
 from .version import APP_LABEL, APP_NAME, APP_VERSION
 
 
@@ -93,6 +94,7 @@ async def health():
         "timeframes": list(settings.intervals),
         "analysis_horizon": "1m→1y",
         "learning_journal": True,
+        "learning_schema": "v7",
         "feature_factory": True,
         "feature_edge_lab": True,
         "incremental_walkforward": True,
@@ -101,6 +103,8 @@ async def health():
         "analog_edge_validation": True,
         "long_historical_memory": True,
         "historical_archive_mode": "LAZY_SHADOW_ONLY",
+        "candidate_evidence_matrix": True,
+        "candidate_evidence_mode": "ALL_BRAINS_SHADOW_ONLY",
         "feature_auto_promotion": False,
         "cycle_models": True,
         "readiness_gate": True,
@@ -118,6 +122,11 @@ async def health():
 @app.get("/api/version")
 async def api_version():
     return {"name": APP_NAME, "version": APP_VERSION, "label": APP_LABEL}
+
+
+@app.get("/api/system-manifest")
+async def api_system_manifest():
+    return manifest()
 
 
 @app.get("/api/state")
@@ -177,13 +186,15 @@ async def api_historical_archive(brain: str | None = None):
         return engine.historical_archive.state(brain.upper())
     return {
         "current": engine.archive_state,
-        "brains": {
-            name: engine.historical_archive.state(name)
-            for name in ("SCALP", "INTRADAY", "SWING")
-        },
+        "brains": {name: engine.historical_archive.state(name) for name in ("SCALP", "INTRADAY", "SWING")},
         "mode": "LAZY_SHADOW_ONLY",
         "weight_in_master": 0.0,
     }
+
+
+@app.get("/api/candidate-evidence")
+async def api_candidate_evidence():
+    return engine.candidate_evidence
 
 
 @app.get("/api/network")
