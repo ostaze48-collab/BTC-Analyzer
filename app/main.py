@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from .analog_validation import summarize_analog_validation
 from .backtest import BacktestEngine
 from .config import settings
 from .cycle_walkforward import CycleWalkForward
@@ -97,6 +98,7 @@ async def health():
         "incremental_walkforward": True,
         "historical_analogs": True,
         "historical_analogs_mode": "SHADOW_ONLY",
+        "analog_edge_validation": True,
         "feature_auto_promotion": False,
         "cycle_models": True,
         "readiness_gate": True,
@@ -152,6 +154,14 @@ async def api_edge_lab(limit: int = 5000):
 async def api_incremental_edge(limit: int = 5000, max_features: int = 250):
     samples = db.edge_samples(max(1, min(limit, 20000)))
     return incremental_walkforward(samples, max_features=max(10, min(max_features, 1000)))
+
+
+@app.get("/api/analog-validation")
+async def api_analog_validation(limit: int = 5000):
+    samples = db.edge_samples(max(1, min(limit, 20000)))
+    edge = analyze_feature_edge(samples)
+    incremental = incremental_walkforward(samples, max_features=500)
+    return summarize_analog_validation(edge, incremental)
 
 
 @app.get("/api/historical-analogs")
