@@ -21,7 +21,9 @@ const candles = chart.addSeries(LightweightCharts.CandlestickSeries, {
 });
 
 function resize(){ chart.applyOptions({ width: $("chart").clientWidth, height: $("chart").clientHeight }); }
-window.addEventListener("resize", resize); resize();
+window.addEventListener("resize", resize);
+window.addEventListener("orientationchange", () => setTimeout(resize, 250));
+resize();
 
 async function loadCandles() {
   const r = await fetch(`/api/candles/${tf}?limit=500`);
@@ -65,6 +67,7 @@ function renderBrains(master) {
   $("brains").innerHTML = proposals.map(p => {
     const score = p.final_score || 0;
     const gate = p.risk_gate === "PASSED" ? "✅ PASSED" : "⛔ " + (p.risk_gate || "WAIT");
+    const reasons = (p.risk_gate_reasons || []).slice(0,2).join(" · ");
     return `<div class="brain">
       <h3>${p.brain}</h3>
       <div class="dir ${p.direction}">${p.direction}</div>
@@ -73,6 +76,7 @@ function renderBrains(master) {
       <small>EV: ${num(p.ev_pct,4)}% · R:R ${num(p.rr,2)}</small>
       <div class="scorebar"><i style="width:${Math.max(0,Math.min(100,score))}%"></i></div>
       <small>${gate} · ${p.shared_context || ""}</small>
+      ${reasons ? `<small class="gate-reasons">${reasons}</small>` : ""}
     </div>`;
   }).join("") || `<div class="empty">بانتظار أول تحليل...</div>`;
 }
@@ -102,12 +106,14 @@ async function refreshTrades(){
   const r = await fetch("/api/trades?limit=20");
   const rows = await r.json();
   $("tradesBody").innerHTML = rows.map(t => `<tr>
-    <td>${t.id}</td><td>${t.brain}</td>
-    <td class="${t.direction==="LONG"?"good":"bad"}">${t.direction}</td>
-    <td>${num(t.entry)}</td><td>${num(t.exit_price)}</td>
-    <td class="${Number(t.realized_pnl)>=0?"good":"bad"}">${money(t.realized_pnl)}</td>
-    <td>${t.exit_reason || t.status}</td>
-  </tr>`).join("");
+    <td data-label="#">${t.id}</td>
+    <td data-label="العقل">${t.brain}</td>
+    <td data-label="الاتجاه" class="${t.direction==="LONG"?"good":"bad"}">${t.direction}</td>
+    <td data-label="الدخول">${num(t.entry)}</td>
+    <td data-label="الخروج">${num(t.exit_price)}</td>
+    <td data-label="P/L" class="${Number(t.realized_pnl)>=0?"good":"bad"}">${money(t.realized_pnl)}</td>
+    <td data-label="السبب">${t.exit_reason || t.status}</td>
+  </tr>`).join("") || `<tr><td data-label="الحالة">لا توجد صفقات مسجلة بعد</td></tr>`;
 }
 
 function renderState(s) {
