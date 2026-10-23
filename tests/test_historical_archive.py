@@ -1,15 +1,19 @@
 import unittest
 
+from app.brains import PROFILES
 from app.engine import TradingEngine
 from app.historical_archive import HistoricalArchive, PROFILE_DAYS, _parse
 
 
 class HistoricalArchiveTests(unittest.TestCase):
-    def test_profiles_match_strategy_horizons(self):
+    def test_profiles_match_strategy_horizons_and_anchors(self):
         self.assertGreaterEqual(PROFILE_DAYS["SCALP"]["5m"], 30)
         self.assertGreaterEqual(PROFILE_DAYS["INTRADAY"]["15m"], 90)
+        self.assertGreaterEqual(PROFILE_DAYS["INTRADAY"]["30m"], 180)
         self.assertGreaterEqual(PROFILE_DAYS["SWING"]["4h"], 365 * 4)
         self.assertGreaterEqual(PROFILE_DAYS["SWING"]["1d"], 365 * 8)
+        for profile in PROFILES:
+            self.assertIn(profile.anchor, PROFILE_DAYS[profile.name], f"missing deep anchor for {profile.name}")
 
     def test_archive_is_shadow_and_empty_before_lazy_load(self):
         archive = HistoricalArchive()
