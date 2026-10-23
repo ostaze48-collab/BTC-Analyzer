@@ -19,7 +19,7 @@ class BrainProfile:
 PROFILES = (
     BrainProfile("SCALP", {"1m": 0.30, "3m": 0.35, "5m": 0.25, "15m": 0.10}, "5m", (1.2, 1.8, 2.5), 0.70),
     BrainProfile("INTRADAY", {"15m": 0.25, "30m": 0.30, "1h": 0.30, "2h": 0.15}, "30m", (1.4, 2.2, 3.0), 0.90),
-    BrainProfile("SWING", {"4h": 0.20, "6h": 0.15, "8h": 0.10, "12h": 0.20, "1d": 0.25, "3d": 0.07, "1w": 0.03}, "4h", (1.5, 2.5, 4.0), 1.00),
+    BrainProfile("SWING", {"4h": 0.16, "6h": 0.12, "8h": 0.08, "12h": 0.15, "1d": 0.24, "3d": 0.12, "1w": 0.08, "1M": 0.05}, "4h", (1.5, 2.5, 4.0), 1.00),
 )
 
 
@@ -30,9 +30,10 @@ def _weighted_vote(snapshots: dict[str, dict[str, Any]], weights: dict[str, floa
     for interval, weight in weights.items():
         snap = snapshots.get(interval, {})
         value = vote(snap)
-        # Patterns are intentionally capped as a secondary confirmation factor.
-        # Trend, structure, momentum and macro context remain dominant.
         value += float(snap.get("pattern_bias", 0.0)) * 0.18
+        feature_bias = float((snap.get("feature_summary") or {}).get("bias", 0.0))
+        feature_strength = float((snap.get("feature_summary") or {}).get("strength", 0.0))
+        value += feature_bias * min(0.22, 0.08 + 0.14 * feature_strength)
         value = max(-1.0, min(1.0, value))
         details[interval] = round(value, 3)
         if snap:
@@ -41,30 +42,49 @@ def _weighted_vote(snapshots: dict[str, dict[str, Any]], weights: dict[str, floa
     return (total / used if used else 0.0), details
 
 
-def macro_context(snapshots: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    weights = {"1d": 0.45, "3d": 0.30, "1w": 0.25}
-    bias, votes = _weighted_vote(snapshots, weights)
-    if bias > 0.18:
+def macro_context(snapshots: dict[str, dict[str, Any]], cycle: dict[str, Any] | None = None) -> dict[str, Any]:
+    weights = {
+        "1d": 0.20, "3d": 0.15, "1w": 0.18,
+        "1M": 0.18, "3M": 0.12, "6M": 0.09, "1y": 0.08,
+    }
+    technical_bias, votes = _weighted_vote(snapshots, weights)
+    cycle = cycle or {}
+    cycle_bias = float(cycle.get("bias", 0.0) or 0.0)
+    cycle_strength = float(cycle.get("strength", 0.0) or 0.0)
+    # Valuation/cycle models get only a small bounded macro weight; they never
+    # time entries by themselves.
+    cycle_weight = min(0.14, 0.06 + 0.08 * cycle_strength) if cycle.get("available") else 0.0
+    bias = technical_bias * (1.0 - cycle_weight) + cycle_bias * cycle_weight
+    if bias > 0.16:
         direction = "BULLISH"
-    elif bias < -0.18:
+    elif bias < -0.16:
         direction = "BEARISH"
     else:
         direction = "NEUTRAL"
-    return {"direction": direction, "bias": round(bias, 4), "strength": round(abs(bias), 4), "votes": votes}
+    return {
+        "direction": direction,
+        "bias": round(bias, 4),
+        "technical_bias": round(technical_bias, 4),
+        "cycle_bias": round(cycle_bias, 4),
+        "cycle_weight": round(cycle_weight, 4),
+        "strength": round(abs(bias), 4),
+        "votes": votes,
+        "horizon": "1d→1y",
+    }
 
 
-def layer_context(snapshots: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def layer_context(snapshots: dict[str, dict[str, Any]], cycle: dict[str, Any] | None = None) -> dict[str, Any]:
     layers = {
         "MICRO": {"1m": 0.35, "3m": 0.35, "5m": 0.30},
         "INTRADAY": {"15m": 0.25, "30m": 0.25, "1h": 0.30, "2h": 0.20},
-        "SWING": {"4h": 0.18, "6h": 0.14, "8h": 0.10, "12h": 0.18, "1d": 0.25, "3d": 0.10, "1w": 0.05},
+        "SWING": {"4h": 0.16, "6h": 0.12, "8h": 0.08, "12h": 0.14, "1d": 0.25, "3d": 0.15, "1w": 0.10},
     }
     out: dict[str, Any] = {}
     for name, weights in layers.items():
         bias, votes = _weighted_vote(snapshots, weights)
         direction = "BULLISH" if bias > 0.14 else ("BEARISH" if bias < -0.14 else "NEUTRAL")
         out[name] = {"direction": direction, "bias": round(bias, 4), "votes": votes}
-    out["MACRO"] = macro_context(snapshots)
+    out["MACRO"] = macro_context(snapshots, cycle)
     return out
 
 
@@ -93,12 +113,20 @@ def _proposal(profile: BrainProfile, snapshots: dict[str, dict[str, Any]], macro
         confidence -= min(18.0, (8.0 + 10.0 * macro_strength) * profile.macro_sensitivity)
 
     anchor_pattern_bias = float(anchor.get("pattern_bias", 0.0))
+    feature_summary = anchor.get("feature_summary") or {}
+    anchor_feature_bias = float(feature_summary.get("bias", 0.0))
     pattern_aligned = (direction == "LONG" and anchor_pattern_bias > 0.08) or (direction == "SHORT" and anchor_pattern_bias < -0.08)
     pattern_conflict = (direction == "LONG" and anchor_pattern_bias < -0.14) or (direction == "SHORT" and anchor_pattern_bias > 0.14)
+    feature_aligned = (direction == "LONG" and anchor_feature_bias > 0.04) or (direction == "SHORT" and anchor_feature_bias < -0.04)
+    feature_conflict = (direction == "LONG" and anchor_feature_bias < -0.10) or (direction == "SHORT" and anchor_feature_bias > 0.10)
     if pattern_aligned:
         confidence += min(3.0, abs(anchor_pattern_bias) * 4.0)
     elif pattern_conflict:
         confidence -= min(4.0, abs(anchor_pattern_bias) * 5.0)
+    if feature_aligned:
+        confidence += min(3.0, abs(anchor_feature_bias) * 8.0)
+    elif feature_conflict:
+        confidence -= min(5.0, abs(anchor_feature_bias) * 10.0)
     confidence = max(45.0, min(95.0, confidence))
 
     common = {
@@ -106,7 +134,10 @@ def _proposal(profile: BrainProfile, snapshots: dict[str, dict[str, Any]], macro
         "bias": round(bias, 4), "anchor": profile.anchor, "votes": details,
         "macro_direction": macro_dir, "macro_bias": macro["bias"], "macro_strength": macro["strength"],
         "macro_conflict": macro_conflict, "macro_aligned": macro_aligned,
+        "cycle_bias": macro.get("cycle_bias", 0.0), "cycle_weight": macro.get("cycle_weight", 0.0),
         "pattern_bias": round(anchor_pattern_bias, 4), "pattern_aligned": pattern_aligned, "pattern_conflict": pattern_conflict,
+        "feature_bias": round(anchor_feature_bias, 4), "feature_count": int(feature_summary.get("count", 0)),
+        "feature_aligned": feature_aligned, "feature_conflict": feature_conflict,
         "candlestick_patterns": anchor.get("candlestick_patterns", []), "chart_patterns": anchor.get("chart_patterns", []),
         "structure_event": anchor.get("structure_event"), "swing_high": anchor.get("swing_high"), "swing_low": anchor.get("swing_low"),
         "fvg_zones": anchor.get("fvg_zones", []), "order_block": anchor.get("order_block"),
@@ -154,8 +185,8 @@ def _proposal(profile: BrainProfile, snapshots: dict[str, dict[str, Any]], macro
     return common
 
 
-def analyze_brains(snapshots: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
-    macro = macro_context(snapshots)
+def analyze_brains(snapshots: dict[str, dict[str, Any]], cycle: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    macro = macro_context(snapshots, cycle)
     proposals = [_proposal(profile, snapshots, macro) for profile in PROFILES]
     directional = [p for p in proposals if p.get("direction") in ("LONG", "SHORT")]
     for p in proposals:
@@ -170,10 +201,14 @@ def analyze_brains(snapshots: dict[str, dict[str, Any]]) -> list[dict[str, Any]]
         p["confidence"] = round(max(45.0, min(95.0, adjusted)), 2)
         p["win_probability"] = round(max(50.0, min(90.0, adjusted)), 2)
         p["consensus_score"] = round(consensus, 2)
-        if same >= 2: p["shared_context"] = "FULL_CONSENSUS"
-        elif same == 1 and opposite == 0: p["shared_context"] = "PARTIAL_CONSENSUS"
-        elif opposite >= 1: p["shared_context"] = "CONFLICT"
-        else: p["shared_context"] = "SOLO"
+        if same >= 2:
+            p["shared_context"] = "FULL_CONSENSUS"
+        elif same == 1 and opposite == 0:
+            p["shared_context"] = "PARTIAL_CONSENSUS"
+        elif opposite >= 1:
+            p["shared_context"] = "CONFLICT"
+        else:
+            p["shared_context"] = "SOLO"
         prob = p["win_probability"] / 100
         reward_pct = abs(p["tp2"] - p["entry"]) / p["entry"] * 100
         fees_pct = settings.paper_fee_rate * 2 * 100

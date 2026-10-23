@@ -59,7 +59,7 @@ async def lifespan(app: FastAPI):
     await engine.stop()
 
 
-app = FastAPI(title="BTC AI Trader V1.6", version="1.6.0", lifespan=lifespan)
+app = FastAPI(title="BTC AI Trader V1.8", version="1.8.0", lifespan=lifespan)
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -73,12 +73,15 @@ async def home():
 async def health():
     return {
         "ok": True,
-        "service": "BTC AI Trader V1.6",
+        "service": "BTC AI Trader V1.8",
         "market_connected": bool(engine and engine.market.connected),
         "backtest_running": backtester.running,
         "paper_only": True,
         "timeframes": list(settings.intervals),
+        "analysis_horizon": "1m→1y",
         "learning_journal": True,
+        "feature_factory": True,
+        "cycle_models": True,
     }
 
 
@@ -96,7 +99,7 @@ async def api_learning():
 async def api_candles(interval: str, limit: int = 500):
     if interval not in settings.intervals:
         raise HTTPException(400, f"Unsupported interval: {interval}")
-    return engine.market.get(interval, max(20, min(limit, 500)))
+    return engine.market.get(interval, max(8, min(limit, 500)))
 
 
 @app.get("/api/trades")

@@ -12,20 +12,28 @@ def bullish_snapshot():
         "ema200": 100.0, "vwap20": 107.0, "rsi14": 60.0, "macd_hist": 1.0,
         "structure": "BULLISH", "structure_event": {"kind": "BOS_UP"},
         "order_block": {}, "fvg_zones": [], "liquidity": {}, "trend_channel": None,
+        "feature_summary": {"count": 220, "bias": 0.2, "strength": 0.5},
+        "pattern_bias": 0.0,
     }
 
 
 class MultiTimeframeTests(unittest.TestCase):
-    def test_full_stack_runs_micro_to_weekly(self):
+    def test_full_stack_runs_micro_to_yearly(self):
         self.assertEqual(settings.intervals[0], "1m")
-        self.assertEqual(settings.intervals[-1], "1w")
+        self.assertEqual(settings.intervals[-1], "1y")
         self.assertIn("30m", settings.intervals)
         self.assertIn("12h", settings.intervals)
         self.assertIn("3d", settings.intervals)
-        self.assertEqual(len(settings.intervals), 14)
+        self.assertIn("1M", settings.intervals)
+        self.assertIn("3M", settings.intervals)
+        self.assertIn("6M", settings.intervals)
+        self.assertEqual(len(settings.intervals), 18)
 
     def test_macro_context_uses_large_timeframes(self):
-        snaps = {"1d": bullish_snapshot(), "3d": bullish_snapshot(), "1w": bullish_snapshot()}
+        snaps = {
+            "1d": bullish_snapshot(), "3d": bullish_snapshot(), "1w": bullish_snapshot(),
+            "1M": bullish_snapshot(), "3M": bullish_snapshot(), "6M": bullish_snapshot(), "1y": bullish_snapshot(),
+        }
         macro = macro_context(snaps)
         self.assertEqual(macro["direction"], "BULLISH")
         self.assertGreater(macro["strength"], 0.2)

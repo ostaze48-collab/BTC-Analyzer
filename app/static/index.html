@@ -7,7 +7,7 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>BTC AI Trader V1.6</title>
+  <title>BTC AI Trader V1.8</title>
   <link rel="stylesheet" href="/static/styles.css" />
   <link rel="stylesheet" href="/static/backtest.css" />
   <link rel="stylesheet" href="/static/structure.css" />
@@ -17,8 +17,8 @@
 <body>
   <header class="app-header">
     <div class="brand">
-      <h1>BTC AI TRADER <span>V1.6</span></h1>
-      <p>3 عقول · 14 فريم · Regime Journal · MASTER · صفقة واحدة</p>
+      <h1>BTC AI TRADER <span>V1.8</span></h1>
+      <p>3 عقول · 18 فريم 1m→1Y · Cycle Models · Feature Factory · صفقة واحدة</p>
     </div>
     <div class="pricebox"><div id="conn" class="pill">CONNECTING</div><strong id="price">—</strong><small>BTCUSDT</small></div>
   </header>
@@ -38,8 +38,14 @@
     <section id="brainsSection" class="card brain-card section-brains"><div class="section-title-row"><div class="card-title">العقول الثلاثة</div><small class="mobile-hint">اسحب للمقارنة ←</small></div><div id="brains" class="brains"></div></section>
 
     <section id="marketContextSection" class="card context-card section-context">
-      <div class="section-title-row"><div><div class="card-title">قراءة السوق عبر جميع الفريمات</div><small class="muted">من 1 دقيقة حتى الأسبوعي · القرار يستخدم الفريمات تلقائيًا</small></div></div>
+      <div class="section-title-row"><div><div class="card-title">قراءة السوق عبر جميع الفريمات</div><small class="muted">من دقيقة إلى سنة · القرار يقرأها تلقائيًا دون الحاجة لفتح الفريم يدويًا</small></div></div>
       <div id="timeframeLayers" class="timeframe-layers"></div><div id="marketContext" class="market-context"></div>
+    </section>
+
+    <section id="cycleSection" class="card section-context">
+      <div class="section-title-row"><div><div class="card-title">Cycle / Valuation Models</div><small class="muted">Power Law · HPR/Rainbow · Mayer · Pi Cycle · 4-Year SMA · سياق طويل الأجل فقط</small></div></div>
+      <div id="cycleModels" class="market-context"><div class="muted">بانتظار بيانات الدورة...</div></div>
+      <div id="featureEngine" class="learning-note">بانتظار Feature Factory...</div>
     </section>
 
     <section id="patternsSection" class="card pattern-card section-patterns">
@@ -49,7 +55,7 @@
 
     <section id="chartSection" class="card chart-card section-chart">
       <div class="chart-head"><div class="card-title">الشارت الذكي</div><div id="tfButtons" class="tf-buttons" aria-label="Timeframes">
-        <button data-tf="1m">1m</button><button data-tf="3m">3m</button><button class="active" data-tf="5m">5m</button><button data-tf="15m">15m</button><button data-tf="30m">30m</button><button data-tf="1h">1H</button><button data-tf="2h">2H</button><button data-tf="4h">4H</button><button data-tf="6h">6H</button><button data-tf="8h">8H</button><button data-tf="12h">12H</button><button data-tf="1d">1D</button><button data-tf="3d">3D</button><button data-tf="1w">1W</button>
+        <button data-tf="1m">1m</button><button data-tf="3m">3m</button><button class="active" data-tf="5m">5m</button><button data-tf="15m">15m</button><button data-tf="30m">30m</button><button data-tf="1h">1H</button><button data-tf="2h">2H</button><button data-tf="4h">4H</button><button data-tf="6h">6H</button><button data-tf="8h">8H</button><button data-tf="12h">12H</button><button data-tf="1d">1D</button><button data-tf="3d">3D</button><button data-tf="1w">1W</button><button data-tf="1M">1M</button><button data-tf="3M">3M</button><button data-tf="6M">6M</button><button data-tf="1y">1Y</button>
       </div></div>
       <div class="chart-controls" aria-label="Chart overlays">
         <button class="overlay-toggle active" data-overlay="ema">EMA 20/50/200</button><button class="overlay-toggle" data-overlay="vwap">VWAP</button><button class="overlay-toggle active" data-overlay="sr">دعم / مقاومة</button><button class="overlay-toggle active" data-overlay="trade">Entry / SL / TP</button><button id="structureToggle" class="overlay-toggle active" type="button">Swing / BOS / CHoCH</button><button id="zonesToggle" class="overlay-toggle active" type="button">FVG / Order Block</button><button id="liquidityToggle" class="overlay-toggle active" type="button">Liquidity / Sweeps</button><button id="channelToggle" class="overlay-toggle active" type="button">Trendlines / Channel</button><button id="patternToggle" class="overlay-toggle active" type="button">Patterns</button>
@@ -62,26 +68,24 @@
     </section>
 
     <section id="learningSection" class="card learning-card section-learning">
-      <div class="section-title-row"><div><div class="card-title">Learning Journal · سجل التعلم</div><small class="muted">يسجل ميزات الدخول والخروج ويقارن أداء كل عقل حسب حالة السوق</small></div></div>
+      <div class="section-title-row"><div><div class="card-title">Learning Journal · سجل التعلم</div><small class="muted">يحفظ الميزات الخلفية وقت الدخول والخروج ويقارن أداء كل عقل حسب حالة السوق</small></div></div>
       <div id="currentRegime" class="regime-strip"><div class="muted">بانتظار تصنيف السوق...</div></div>
-      <div id="excursionBox"></div>
-      <div id="learningStats" class="learning-stats"></div>
-      <div id="learningMatrix" class="learning-matrix"></div>
-      <div class="learning-note">هذه بيانات Paper Trading لجمع Dataset قابل للتدقيق. لن نسمح لنموذج تعلم آلي بتغيير قرارات التنفيذ قبل وجود عينة كافية واختبار Out-of-Sample.</div>
+      <div id="excursionBox"></div><div id="learningStats" class="learning-stats"></div><div id="learningMatrix" class="learning-matrix"></div>
+      <div class="learning-note">Paper Trading فقط. أي انتقال للتداول الحقيقي يتطلب عينة كافية وWalk-Forward/Out-of-Sample ومعايير مخاطرة ناجحة؛ لا يوجد نموذج يضمن الربح.</div>
     </section>
 
     <section id="backtestSection" class="card backtest-card section-backtest">
-      <div class="backtest-head"><div><div class="card-title">Replay / Backtesting</div><div class="muted">اختبار نفس العقول مع 14 فريم وMarket Structure وPattern Engine.</div></div><div class="backtest-controls"><select id="backtestDays" aria-label="مدة الاختبار"><option value="1">1 يوم</option><option value="3" selected>3 أيام</option><option value="7">7 أيام</option><option value="14">14 يوم</option></select><button id="runBacktest" class="primary">▶ تشغيل</button></div></div>
+      <div class="backtest-head"><div><div class="card-title">Replay / Backtesting</div><div class="muted">نفس العقول والفريمات وCycle Models وFeature Factory المستخدمة في النظام الحي.</div></div><div class="backtest-controls"><select id="backtestDays" aria-label="مدة الاختبار"><option value="1">1 يوم</option><option value="3" selected>3 أيام</option><option value="7">7 أيام</option><option value="14">14 يوم</option></select><button id="runBacktest" class="primary">▶ تشغيل</button></div></div>
       <div id="backtestStatus" class="muted backtest-status">جاهز للاختبار.</div><div id="backtestResults"></div>
     </section>
 
     <section id="tradesSection" class="card section-trades"><div class="card-title">آخر الصفقات</div><div class="table-wrap"><table><thead><tr><th>#</th><th>العقل</th><th>الاتجاه</th><th>الدخول</th><th>الخروج</th><th>P/L</th><th>السبب</th></tr></thead><tbody id="tradesBody"></tbody></table></div></section>
-    <div class="notice">V1.6 للمحاكاة والبحث فقط · التعلم يبدأ بجمع بيانات موثقة قبل تدريب أي ML</div>
+    <div class="notice">V1.8 للمحاكاة والبحث · 1m→1Y · النماذج طويلة الأجل سياق وليست وعدًا بالسعر</div>
   </main>
 
   <nav class="mobile-nav" aria-label="التنقل السريع"><a href="#overview"><span>⌂</span><small>الرئيسية</small></a><a href="#brainsSection"><span>◉</span><small>العقول</small></a><a href="#chartSection"><span>⌁</span><small>الشارت</small></a><a href="#learningSection"><span>↗</span><small>التعلم</small></a><a href="#backtestSection"><span>▶</span><small>الاختبار</small></a></nav>
 
   <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5.2.1/dist/lightweight-charts.standalone.production.js"></script>
-  <script src="/static/app.js"></script><script src="/static/structure.js"></script><script src="/static/patterns.js"></script><script src="/static/learning.js"></script><script src="/static/backtest.js"></script>
+  <script src="/static/app.js"></script><script src="/static/structure.js"></script><script src="/static/patterns.js"></script><script src="/static/learning.js"></script><script src="/static/backtest.js"></script><script src="/static/v18.js"></script>
 </body>
 </html>

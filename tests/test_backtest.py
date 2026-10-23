@@ -31,16 +31,23 @@ class BacktestMechanicsTests(unittest.TestCase):
         self.assertEqual(summary["profit_factor"], 2.0)
         self.assertAlmostEqual(summary["avg_r"], 0.25)
 
-    def test_open_trade_carries_historical_regime(self):
+    def test_open_trade_carries_historical_regime_and_cycle_bias(self):
         p = {
             "brain": "SWING", "direction": "LONG", "entry": 100.0, "stop_loss": 98.0,
             "tp1": 102.0, "tp2": 104.0, "tp3": 108.0,
             "macro_direction": "BULLISH", "macro_conflict": False, "pattern_bias": 0.2,
+            "feature_bias": 0.1,
         }
-        trade = BacktestEngine._open(p, 1000.0, 10, {"regime": "TREND_UP", "volatility": "NORMAL"})
+        trade = BacktestEngine._open(
+            p, 1000.0, 10,
+            {"regime": "TREND_UP", "volatility": "NORMAL"},
+            {"bias": 0.25},
+        )
         self.assertIsNotNone(trade)
         self.assertEqual(trade["market_regime"], "TREND_UP")
         self.assertEqual(trade["regime_volatility"], "NORMAL")
+        self.assertEqual(trade["cycle_bias"], 0.25)
+        self.assertEqual(trade["feature_bias"], 0.1)
 
 
 if __name__ == "__main__":

@@ -11,6 +11,8 @@ import httpx
 from .analysis import enriched_snapshot
 from .brains import analyze_brains, layer_context
 from .config import settings
+from .cycle_models import cycle_model_context
+from .market import aggregate_monthly
 from .master import select_trade
 from .regime import classify_market_regime
 
@@ -18,7 +20,7 @@ INTERVAL_MS = {
     "1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000, "30m": 1_800_000,
     "1h": 3_600_000, "2h": 7_200_000, "4h": 14_400_000, "6h": 21_600_000,
     "8h": 28_800_000, "12h": 43_200_000, "1d": 86_400_000,
-    "3d": 259_200_000, "1w": 604_800_000,
+    "3d": 259_200_000, "1w": 604_800_000, "1M": 2_592_000_000,
 }
 
 
@@ -40,13 +42,26 @@ class BacktestEngine:
             data = await self._load_all(start_ms, end_ms)
             return await asyncio.to_thread(self._simulate, data, start_ms, end_ms, days)
 
-    async def _load_all(self, start_ms: int, end_ms: int) -> dict[str, list[dict[str, Any]]]:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=25) as client:
-            results = await asyncio.gather(*[self._fetch_interval(client, tf, start_ms, end_ms) for tf in settings.intervals])
-        return dict(zip(settings.intervals, results))
+    def _history_start(self, interval: str, start_ms: int) -> int:
+        if interval == "1d":
+            return max(0, start_ms - 1_650 * 86_400_000)  # Mayer/Pi/1458DMA context
+        if interval == "1M":
+            return 0  # build all available quarterly/half-year/yearly candles
+        bars = 240 if interval in ("3d", "1w") else 220
+        return max(0, start_ms - INTERVAL_MS[interval] * bars)
 
-    async def _fetch_interval(self, client: httpx.AsyncClient, interval: str, start_ms: int, end_ms: int):
-        cursor = max(0, start_ms - INTERVAL_MS[interval] * 220)
+    async def _load_all(self, start_ms: int, end_ms: int) -> dict[str, list[dict[str, Any]]]:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
+            results = await asyncio.gather(
+                *[self._fetch_interval(client, tf, self._history_start(tf, start_ms), end_ms) for tf in settings.native_intervals]
+            )
+        data = dict(zip(settings.native_intervals, results))
+        monthly = data.get("1M", [])
+        for tf in settings.synthetic_intervals:
+            data[tf] = aggregate_monthly(monthly, tf)
+        return data
+
+    async def _fetch_interval(self, client: httpx.AsyncClient, interval: str, cursor: int, end_ms: int):
         rows: list[dict[str, Any]] = []
         while cursor < end_ms:
             payload = None
@@ -89,7 +104,7 @@ class BacktestEngine:
         return gross - fees
 
     @staticmethod
-    def _open(p: dict[str, Any], capital: float, ts: int, regime: dict[str, Any]) -> dict[str, Any] | None:
+    def _open(p: dict[str, Any], capital: float, ts: int, regime: dict[str, Any], cycle: dict[str, Any]) -> dict[str, Any] | None:
         risk = abs(float(p["entry"]) - float(p["stop_loss"]))
         if risk <= 0:
             return None
@@ -103,8 +118,9 @@ class BacktestEngine:
             "tp1_hit": False, "tp2_hit": False, "opened_at": ts,
             "initial_risk_price": risk, "mfe_pct": 0.0, "mae_pct": 0.0,
             "macro_direction": p.get("macro_direction"), "macro_conflict": p.get("macro_conflict", False),
-            "pattern_bias": p.get("pattern_bias", 0.0), "market_regime": regime.get("regime", "UNKNOWN"),
-            "regime_volatility": regime.get("volatility", "NORMAL"),
+            "pattern_bias": p.get("pattern_bias", 0.0), "feature_bias": p.get("feature_bias", 0.0),
+            "market_regime": regime.get("regime", "UNKNOWN"), "regime_volatility": regime.get("volatility", "NORMAL"),
+            "cycle_bias": cycle.get("bias", 0.0),
         }
 
     def _partial(self, t: dict[str, Any], fraction: float, price: float, flag: str):
@@ -187,12 +203,13 @@ class BacktestEngine:
         selected = {"SCALP": 0, "INTRADAY": 0, "SWING": 0}
         decision_counts = {"LONG": 0, "SHORT": 0, "WAIT": 0, "NO_TRADE": 0}
         rejected_by_brain = {"SCALP": 0, "INTRADAY": 0, "SWING": 0}
+        cached_cycle: dict[str, Any] = {"available": False, "bias": 0.0, "strength": 0.0, "models": {}}
 
         for minute in timeline:
             now = minute["close_time"]
             changed: set[str] = set()
             for tf in settings.intervals:
-                rows, i = data[tf], pointers[tf]
+                rows, i = data.get(tf, []), pointers[tf]
                 while i < len(rows) and rows[i]["close_time"] <= now:
                     histories[tf].append(rows[i])
                     i += 1
@@ -211,13 +228,19 @@ class BacktestEngine:
             for tf in settings.intervals:
                 if tf in changed or not cached_snapshots[tf]:
                     cached_snapshots[tf] = enriched_snapshot(list(histories[tf]))
+            if "1d" in changed or not cached_cycle.get("available"):
+                cached_cycle = cycle_model_context(list(histories["1d"]))
+
             snaps = cached_snapshots
+            # Require only the minimum bars appropriate for each timeframe.
+            if any(len(histories[tf]) < settings.min_bars(tf) for tf in settings.intervals):
+                continue
             if any(not snaps[tf] for tf in settings.intervals):
                 continue
 
-            layers = layer_context(snaps)
+            layers = layer_context(snaps, cached_cycle)
             regime = classify_market_regime(snaps, layers)
-            advisory = select_trade(analyze_brains(snaps))
+            advisory = select_trade(analyze_brains(snaps, cached_cycle))
             decision_counts[advisory["action"]] = decision_counts.get(advisory["action"], 0) + 1
             for p in advisory["proposals"]:
                 if p.get("direction") in ("LONG", "SHORT") and p.get("risk_gate") == "REJECTED":
@@ -240,7 +263,7 @@ class BacktestEngine:
                     max_dd = max(max_dd, (peak - capital) / peak * 100 if peak else 0)
 
             if not active and advisory["action"] in ("LONG", "SHORT") and advisory["winner"]:
-                active = self._open(advisory["winner"], capital, now, regime)
+                active = self._open(advisory["winner"], capital, now, regime, cached_cycle)
                 if active:
                     selected[active["brain"]] += 1
 
@@ -285,18 +308,21 @@ class BacktestEngine:
             "assumptions": {
                 "paper_only": True, "one_trade_only": True, "same_candle_rule": "STOP_FIRST_CONSERVATIVE",
                 "confirmed_candles_only": True, "intervals": list(settings.intervals), "pattern_engine": True,
-                "regime_classifier": True,
+                "regime_classifier": True, "cycle_models": True, "feature_factory": True,
             },
             "metrics": metrics, "by_brain": by_brain, "by_regime": by_regime,
             "by_brain_regime": by_brain_regime,
             "decision_counts": decision_counts, "rejected_candidates": rejected_by_brain,
             "recent_trades": [
-                {"brain": t["brain"], "direction": t["direction"], "entry": round(t["entry"],2), "exit": round(t["exit_price"],2),
-                 "pnl": round(t["realized_pnl"],2), "r": round(t["r_multiple"],3), "reason": t["exit_reason"],
-                 "mfe_pct": round(t["mfe_pct"],3), "mae_pct": round(t["mae_pct"],3),
-                 "macro_direction": t.get("macro_direction"), "macro_conflict": t.get("macro_conflict", False),
-                 "pattern_bias": round(float(t.get("pattern_bias", 0.0)), 4), "market_regime": t.get("market_regime"),
-                 "regime_volatility": t.get("regime_volatility")}
+                {
+                    "brain": t["brain"], "direction": t["direction"], "entry": round(t["entry"],2), "exit": round(t["exit_price"],2),
+                    "pnl": round(t["realized_pnl"],2), "r": round(t["r_multiple"],3), "reason": t["exit_reason"],
+                    "mfe_pct": round(t["mfe_pct"],3), "mae_pct": round(t["mae_pct"],3),
+                    "macro_direction": t.get("macro_direction"), "macro_conflict": t.get("macro_conflict", False),
+                    "pattern_bias": round(float(t.get("pattern_bias", 0.0)), 4), "feature_bias": round(float(t.get("feature_bias", 0.0)), 4),
+                    "cycle_bias": round(float(t.get("cycle_bias", 0.0)), 4), "market_regime": t.get("market_regime"),
+                    "regime_volatility": t.get("regime_volatility"),
+                }
                 for t in trades[-100:]
             ],
         }
