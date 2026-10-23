@@ -18,6 +18,7 @@ from .edge_lab import analyze_feature_edge
 from .engine import TradingEngine
 from .full_target_walkforward import run_full_target_walkforward
 from .incremental_edge import incremental_walkforward
+from .live_shadow_target import validate_live_shadow_target
 from .readiness import readiness_report
 from .target_advisor import build_historical_target_advisor_from_summary
 from .target_policy_validation import validate_target_policy
@@ -111,6 +112,8 @@ async def health():
         "target_policy_validation_mode": "JOURNAL_PATH_PARTIAL_VALIDATION",
         "full_target_walkforward": True,
         "full_target_walkforward_mode": "FULL_ARCHIVE_TARGET_WALKFORWARD",
+        "live_shadow_target": True,
+        "live_shadow_target_mode": "FROZEN_ENTRY_LIVE_SHADOW",
         "target_policy_auto_apply": False,
         "long_historical_memory": True,
         "historical_archive_mode": "LAZY_SHADOW_ONLY",
@@ -200,6 +203,14 @@ async def api_target_policy_validation(limit: int = 5000):
     samples = db.edge_samples(safe_limit)
     trades = db.recent_trades(safe_limit)
     return validate_target_policy(samples, trades)
+
+
+@app.get("/api/live-shadow-target")
+async def api_live_shadow_target(limit: int = 5000):
+    safe_limit = max(1, min(limit, 20000))
+    samples = db.edge_samples(safe_limit)
+    trades = db.recent_trades(safe_limit)
+    return validate_live_shadow_target(samples, trades)
 
 
 def _normalize_brain(brain: str) -> str:
