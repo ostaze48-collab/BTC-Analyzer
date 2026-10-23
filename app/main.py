@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
@@ -10,8 +11,10 @@ from fastapi.staticfiles import StaticFiles
 
 from .backtest import BacktestEngine
 from .config import settings
+from .cycle_walkforward import CycleWalkForward
 from .db import Database
 from .engine import TradingEngine
+from .readiness import readiness_report
 
 
 class Hub:
@@ -47,6 +50,8 @@ db = Database()
 hub = Hub()
 engine: TradingEngine | None = None
 backtester = BacktestEngine()
+cycle_validator = CycleWalkForward()
+last_execution_replay: dict[str, Any] | None = None
 
 
 @asynccontextmanager
@@ -59,7 +64,7 @@ async def lifespan(app: FastAPI):
     await engine.stop()
 
 
-app = FastAPI(title="BTC AI Trader V1.8", version="1.8.0", lifespan=lifespan)
+app = FastAPI(title="BTC AI Trader V1.9", version="1.9.0", lifespan=lifespan)
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -73,21 +78,44 @@ async def home():
 async def health():
     return {
         "ok": True,
-        "service": "BTC AI Trader V1.8",
+        "service": "BTC AI Trader V1.9",
         "market_connected": bool(engine and engine.market.connected),
         "backtest_running": backtester.running,
+        "cycle_validation_running": cycle_validator.running,
         "paper_only": True,
+        "real_execution_enabled": False,
         "timeframes": list(settings.intervals),
         "analysis_horizon": "1m→1y",
         "learning_journal": True,
         "feature_factory": True,
         "cycle_models": True,
+        "readiness_gate": True,
     }
 
 
 @app.get("/api/state")
 async def api_state():
-    return engine.state()
+    state = engine.state()
+    state["readiness"] = _readiness()
+    return state
+
+
+def _readiness() -> dict[str, Any]:
+    cycle_primary = (cycle_validator.last_result or {}).get("primary") or {}
+    # Short-window replay is intentionally NOT promoted as OOS evidence.
+    exec_evidence: dict[str, Any] = {}
+    if last_execution_replay:
+        metrics = dict(last_execution_replay.get("metrics") or {})
+        exec_evidence = {**metrics, "validation_type": "SHORT_WINDOW_REPLAY"}
+    return readiness_report(db.stats(), db.learning_summary(), exec_evidence, cycle_primary)
+
+
+@app.get("/api/readiness")
+async def api_readiness():
+    report = _readiness()
+    report["cycle_validation"] = cycle_validator.last_result
+    report["latest_execution_replay"] = last_execution_replay
+    return report
 
 
 @app.get("/api/learning")
@@ -109,10 +137,24 @@ async def api_trades(limit: int = 50):
 
 @app.post("/api/backtest")
 async def api_backtest(days: int = 3):
+    global last_execution_replay
     if days not in (1, 3, 7, 14):
         raise HTTPException(400, "days must be one of: 1, 3, 7, 14")
     try:
-        return await backtester.run(days)
+        result = await backtester.run(days)
+        result["validation_type"] = "SHORT_WINDOW_REPLAY"
+        last_execution_replay = result
+        return result
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.post("/api/cycle-validation")
+async def api_cycle_validation(years: int = 6):
+    if years not in (3, 4, 5, 6, 7, 8, 9):
+        raise HTTPException(400, "years must be between 3 and 9")
+    try:
+        return await cycle_validator.run(years)
     except RuntimeError as exc:
         raise HTTPException(409, str(exc)) from exc
 
