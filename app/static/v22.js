@@ -52,4 +52,9 @@
     try{const res=await fetch('/api/state'),state=await res.json();render(state);}catch(e){console.warn('Risk panel refresh failed',e);}
   }
   refresh();setInterval(refresh,5000);
+
+  const next=document.createElement('script');
+  next.src='/static/v23.js';
+  next.defer=true;
+  document.body.appendChild(next);
 })();
