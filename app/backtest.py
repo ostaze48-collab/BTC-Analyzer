@@ -15,6 +15,7 @@ from .cycle_models import cycle_model_context
 from .market import aggregate_monthly
 from .master import select_trade
 from .regime import classify_market_regime
+from .risk_engine import build_risk_plan
 
 INTERVAL_MS = {
     "1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000, "30m": 1_800_000,
@@ -44,9 +45,9 @@ class BacktestEngine:
 
     def _history_start(self, interval: str, start_ms: int) -> int:
         if interval == "1d":
-            return max(0, start_ms - 1_650 * 86_400_000)  # Mayer/Pi/1458DMA context
+            return max(0, start_ms - 1_650 * 86_400_000)
         if interval == "1M":
-            return 0  # build all available quarterly/half-year/yearly candles
+            return 0
         bars = 240 if interval in ("3d", "1w") else 220
         return max(0, start_ms - INTERVAL_MS[interval] * bars)
 
@@ -104,19 +105,32 @@ class BacktestEngine:
         return gross - fees
 
     @staticmethod
-    def _open(p: dict[str, Any], capital: float, ts: int, regime: dict[str, Any], cycle: dict[str, Any]) -> dict[str, Any] | None:
+    def _open(
+        p: dict[str, Any],
+        capital: float,
+        ts: int,
+        regime: dict[str, Any],
+        cycle: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        account = {"starting_capital": float(settings.paper_start_capital), "capital": float(capital)}
+        plan = build_risk_plan(p, account, regime)
+        if not plan.get("allowed"):
+            return None
         risk = abs(float(p["entry"]) - float(p["stop_loss"]))
-        if risk <= 0:
+        if risk <= 0 or float(plan["quantity"]) <= 0:
             return None
-        qty = min(capital * settings.risk_per_trade / risk, capital / float(p["entry"]))
-        if qty <= 0:
-            return None
+        cycle = cycle or {}
         return {
             "brain": p["brain"], "direction": p["direction"], "entry": float(p["entry"]),
-            "stop_loss": float(p["stop_loss"]), "tp1": float(p["tp1"]), "tp2": float(p["tp2"]), "tp3": float(p["tp3"]),
-            "quantity": qty, "remaining_qty": qty, "realized_pnl": 0.0,
+            "stop_loss": float(p["stop_loss"]),
+            "tp1": float(plan["tp1"]), "tp2": float(plan["tp2"]), "tp3": float(plan["tp3"]),
+            "quantity": float(plan["quantity"]), "remaining_qty": float(plan["quantity"]), "realized_pnl": 0.0,
             "tp1_hit": False, "tp2_hit": False, "opened_at": ts,
-            "initial_risk_price": risk, "mfe_pct": 0.0, "mae_pct": 0.0,
+            "initial_risk_price": risk, "initial_risk_cash": float(plan["risk_budget"]),
+            "mfe_pct": 0.0, "mae_pct": 0.0,
+            "leverage": int(plan["leverage"]), "notional": float(plan["notional"]),
+            "margin_used": float(plan["margin_used"]), "target_r": float(plan["target_r"]),
+            "planned_risk": float(plan["risk_budget"]), "risk_fraction": float(plan["risk_fraction"]),
             "macro_direction": p.get("macro_direction"), "macro_conflict": p.get("macro_conflict", False),
             "pattern_bias": p.get("pattern_bias", 0.0), "feature_bias": p.get("feature_bias", 0.0),
             "market_regime": regime.get("regime", "UNKNOWN"), "regime_volatility": regime.get("volatility", "NORMAL"),
@@ -140,7 +154,9 @@ class BacktestEngine:
             t["realized_pnl"] += self._pnl(t, t["remaining_qty"], price)
         t["remaining_qty"] = 0.0
         t["exit_price"], t["exit_reason"], t["closed_at"] = price, reason, ts
-        denom = t["quantity"] * t["initial_risk_price"]
+        denom = float(t.get("initial_risk_cash", 0.0) or 0.0)
+        if denom <= 0:
+            denom = t["quantity"] * t["initial_risk_price"]
         t["r_multiple"] = t["realized_pnl"] / denom if denom > 0 else 0.0
         return t
 
@@ -156,7 +172,7 @@ class BacktestEngine:
             if not t["tp2_hit"] and c["high"] >= t["tp2"]:
                 self._partial(t, .40, t["tp2"], "tp2_hit")
             if c["high"] >= t["tp3"]:
-                return self._close(t, t["tp3"], "TP3", c["close_time"])
+                return self._close(t, t["tp3"], "ADAPTIVE_TARGET_R", c["close_time"])
         else:
             t["mfe_pct"] = max(t["mfe_pct"], (e - c["low"]) / e * 100)
             t["mae_pct"] = max(t["mae_pct"], (c["high"] - e) / e * 100)
@@ -167,13 +183,17 @@ class BacktestEngine:
             if not t["tp2_hit"] and c["low"] <= t["tp2"]:
                 self._partial(t, .40, t["tp2"], "tp2_hit")
             if c["low"] <= t["tp3"]:
-                return self._close(t, t["tp3"], "TP3", c["close_time"])
+                return self._close(t, t["tp3"], "ADAPTIVE_TARGET_R", c["close_time"])
         return None
 
     @staticmethod
     def summarize_trades(trades: list[dict[str, Any]]) -> dict[str, Any]:
         if not trades:
-            return {"trades": 0, "wins": 0, "losses": 0, "win_rate": 0.0, "net_pnl": 0.0, "profit_factor": 0.0, "avg_r": 0.0, "avg_mfe_pct": 0.0, "avg_mae_pct": 0.0}
+            return {
+                "trades": 0, "wins": 0, "losses": 0, "win_rate": 0.0, "net_pnl": 0.0,
+                "profit_factor": 0.0, "avg_r": 0.0, "avg_mfe_pct": 0.0, "avg_mae_pct": 0.0,
+                "avg_leverage": 0.0, "avg_target_r": 0.0,
+            }
         pnls = [float(t["realized_pnl"]) for t in trades]
         wins = sum(p > 0 for p in pnls)
         gw = sum(p for p in pnls if p > 0)
@@ -185,6 +205,8 @@ class BacktestEngine:
             "avg_r": round(fmean([float(t["r_multiple"]) for t in trades]), 3),
             "avg_mfe_pct": round(fmean([float(t["mfe_pct"]) for t in trades]), 3),
             "avg_mae_pct": round(fmean([float(t["mae_pct"]) for t in trades]), 3),
+            "avg_leverage": round(fmean([float(t.get("leverage", 1)) for t in trades]), 3),
+            "avg_target_r": round(fmean([float(t.get("target_r", 0)) for t in trades]), 3),
         }
 
     def _simulate(self, data, start_ms: int, end_ms: int, days: int):
@@ -193,7 +215,10 @@ class BacktestEngine:
         if not timeline:
             raise RuntimeError("No historical 1m candles were returned")
 
-        histories = {tf: deque(maxlen=settings.history_limit) for tf in settings.intervals}
+        histories = {
+            tf: deque(maxlen=1800 if tf == "1d" else settings.history_limit)
+            for tf in settings.intervals
+        }
         pointers = {tf: 0 for tf in settings.intervals}
         cached_snapshots = {tf: {} for tf in settings.intervals}
         capital = float(settings.paper_start_capital)
@@ -203,6 +228,7 @@ class BacktestEngine:
         selected = {"SCALP": 0, "INTRADAY": 0, "SWING": 0}
         decision_counts = {"LONG": 0, "SHORT": 0, "WAIT": 0, "NO_TRADE": 0}
         rejected_by_brain = {"SCALP": 0, "INTRADAY": 0, "SWING": 0}
+        capital_guard_blocks = 0
         cached_cycle: dict[str, Any] = {"available": False, "bias": 0.0, "strength": 0.0, "models": {}}
 
         for minute in timeline:
@@ -232,7 +258,6 @@ class BacktestEngine:
                 cached_cycle = cycle_model_context(list(histories["1d"]))
 
             snaps = cached_snapshots
-            # Require only the minimum bars appropriate for each timeframe.
             if any(len(histories[tf]) < settings.min_bars(tf) for tf in settings.intervals):
                 continue
             if any(not snaps[tf] for tf in settings.intervals):
@@ -266,6 +291,10 @@ class BacktestEngine:
                 active = self._open(advisory["winner"], capital, now, regime, cached_cycle)
                 if active:
                     selected[active["brain"]] += 1
+                else:
+                    dd_from_start = max(0.0, (settings.paper_start_capital - capital) / settings.paper_start_capital)
+                    if dd_from_start >= settings.soft_pause_drawdown:
+                        capital_guard_blocks += 1
 
         if active:
             last = timeline[-1]
@@ -299,8 +328,9 @@ class BacktestEngine:
         metrics = {
             "starting_capital": round(settings.paper_start_capital, 2), "ending_capital": round(capital, 2),
             "net_pnl": round(capital-settings.paper_start_capital, 2), "return_pct": round((capital/settings.paper_start_capital-1)*100, 2),
-            **{k: overall[k] for k in ("trades", "wins", "losses", "win_rate", "profit_factor", "avg_r")},
+            **{k: overall[k] for k in ("trades", "wins", "losses", "win_rate", "profit_factor", "avg_r", "avg_leverage", "avg_target_r")},
             "max_drawdown_pct": round(max_dd, 3),
+            "capital_guard_blocks": capital_guard_blocks,
         }
 
         return {
@@ -309,6 +339,10 @@ class BacktestEngine:
                 "paper_only": True, "one_trade_only": True, "same_candle_rule": "STOP_FIRST_CONSERVATIVE",
                 "confirmed_candles_only": True, "intervals": list(settings.intervals), "pattern_engine": True,
                 "regime_classifier": True, "cycle_models": True, "feature_factory": True,
+                "adaptive_position_sizing": True, "adaptive_leverage_max": settings.max_paper_leverage,
+                "adaptive_profit_target_r": [1, 5],
+                "soft_pause_drawdown_pct": settings.soft_pause_drawdown * 100,
+                "hard_drawdown_limit_pct": settings.max_total_drawdown * 100,
             },
             "metrics": metrics, "by_brain": by_brain, "by_regime": by_regime,
             "by_brain_regime": by_brain_regime,
@@ -317,6 +351,8 @@ class BacktestEngine:
                 {
                     "brain": t["brain"], "direction": t["direction"], "entry": round(t["entry"],2), "exit": round(t["exit_price"],2),
                     "pnl": round(t["realized_pnl"],2), "r": round(t["r_multiple"],3), "reason": t["exit_reason"],
+                    "leverage": t.get("leverage"), "target_r": t.get("target_r"), "planned_risk": round(float(t.get("planned_risk",0)),2),
+                    "notional": round(float(t.get("notional",0)),2), "margin_used": round(float(t.get("margin_used",0)),2),
                     "mfe_pct": round(t["mfe_pct"],3), "mae_pct": round(t["mae_pct"],3),
                     "macro_direction": t.get("macro_direction"), "macro_conflict": t.get("macro_conflict", False),
                     "pattern_bias": round(float(t.get("pattern_bias", 0.0)), 4), "feature_bias": round(float(t.get("feature_bias", 0.0)), 4),
