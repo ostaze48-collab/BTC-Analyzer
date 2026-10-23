@@ -6,6 +6,7 @@ from typing import Any, Awaitable, Callable
 
 from .analysis import enriched_snapshot
 from .brains import analyze_brains, layer_context
+from .candidate_evidence import CandidateEvidenceMatrix
 from .config import settings
 from .cycle_models import cycle_model_context
 from .db import Database
@@ -36,6 +37,8 @@ class TradingEngine:
         self.historical_archive = HistoricalArchive(ttl_seconds=21_600)
         self.archive_state: dict[str, Any] = self.historical_archive.state()
         self._last_archive_token: tuple[Any, ...] | None = None
+        self.candidate_evidence_source = CandidateEvidenceMatrix(ttl_seconds=300)
+        self.candidate_evidence: dict[str, Any] = self.candidate_evidence_source.state
         self.snapshots: dict[str, dict[str, Any]] = {}
         self.layers: dict[str, Any] = {}
         self.cycle: dict[str, Any] = {"available": False, "models": {}, "bias": 0.0, "strength": 0.0}
@@ -50,7 +53,9 @@ class TradingEngine:
         await self.analyze(force=True)
 
     async def stop(self) -> None:
-        await asyncio.gather(self.market.stop(), self.historical_archive.stop())
+        await asyncio.gather(
+            self.market.stop(), self.historical_archive.stop(), self.candidate_evidence_source.stop()
+        )
 
     def _build_snapshots(self) -> dict[str, dict[str, Any]]:
         return {
@@ -88,7 +93,8 @@ class TradingEngine:
         )
         payload["historical_analogs"] = self.historical_analogs
         payload["historical_archive"] = self.archive_state
-        payload["schema"] = "learning_vector_v6"
+        payload["candidate_evidence_matrix"] = self.candidate_evidence
+        payload["schema"] = "learning_vector_v7"
         return payload
 
     def _public_snapshots(self) -> dict[str, dict[str, Any]]:
@@ -128,6 +134,19 @@ class TradingEngine:
         )
         self.historical_analogs["archive"] = self.archive_state
         advisory["historical_analogs"] = self.historical_analogs
+
+    def _schedule_candidate_evidence(self, advisory: dict[str, Any], force: bool = False) -> None:
+        proposals = list(advisory.get("proposals") or [])
+        directional = [p for p in proposals if p.get("direction") in ("LONG", "SHORT")]
+        for p in directional:
+            self.historical_archive.schedule(str(p.get("brain", "")))
+        archives = {brain: self.historical_archive.state(brain) for brain in ("SCALP", "INTRADAY", "SWING")}
+        histories = {brain: self._history_for_analogs(brain) for brain in ("SCALP", "INTRADAY", "SWING")}
+        self.candidate_evidence = self.candidate_evidence_source.schedule(
+            proposals, self.snapshots, self.layers, self.regime, histories, archives,
+            self.learning_cache, broadcaster=self.broadcast, force=force,
+        )
+        advisory["candidate_evidence_matrix"] = self.candidate_evidence
 
     async def analyze(self, force: bool = False) -> None:
         if self._analysis_lock.locked() and not force:
@@ -173,10 +192,8 @@ class TradingEngine:
                     advisory["derivatives_intelligence"] = self.derivatives
                     active = None
 
-            # Historical analogs are a shadow evidence layer. Long history loads
-            # lazily in the background for the relevant brain; current analysis
-            # never blocks waiting for the archive.
             await self._refresh_analogs(advisory, force=force)
+            self._schedule_candidate_evidence(advisory, force=force)
 
             if not active and advisory["action"] in ("LONG", "SHORT") and advisory["winner"]:
                 context = {"regime": self.regime, "feature_vector": self._features(advisory)}
@@ -215,7 +232,7 @@ class TradingEngine:
             "timeframe_layers": self.layers, "market_regime": self.regime,
             "cycle_models": self.cycle, "network_intelligence": self.network,
             "derivatives_intelligence": self.derivatives, "historical_analogs": self.historical_analogs,
-            "historical_archive": self.archive_state,
+            "historical_archive": self.archive_state, "candidate_evidence_matrix": self.candidate_evidence,
             "master": self.master,
             "active_trade": self.trade_manager.state(price), "stats": stats,
             "learning": self.learning_cache,
@@ -241,7 +258,8 @@ class TradingEngine:
                 "intervals": list(self.market.candles.keys()), "pattern_engine": True, "learning_journal": True,
                 "cycle_models": True, "network_intelligence": "SHADOW_ONLY",
                 "derivatives_intelligence": "SHADOW_ONLY", "historical_analogs": "SHADOW_ONLY",
-                "historical_archive": "LAZY_SHADOW_ONLY", "analysis_horizon": "1m→1y",
+                "historical_archive": "LAZY_SHADOW_ONLY", "candidate_evidence_matrix": "SHADOW_ONLY",
+                "analysis_horizon": "1m→1y",
             },
         }
 
