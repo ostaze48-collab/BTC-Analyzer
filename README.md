@@ -1,79 +1,72 @@
-# BTC AI Trader V1.22
+# BTC AI Trader V1.23
 
 منظومة بحث ومحاكاة **Paper Trading فقط** لتحليل BTCUSDT عبر ثلاثة عقول مترابطة: `SCALP` و`INTRADAY` و`SWING`، ثم اختيار صفقة واحدة بواسطة `MASTER`.
 
-> التداول الحقيقي معطّل. لا يتم الانتقال إليه إلا بعد اجتياز Readiness Gate واختبارات Out-of-Sample/Walk-Forward وLive Shadow مستقرة بما يكفي.
+> التداول الحقيقي معطّل. لا يتم الانتقال إليه إلا بعد أدلة Out-of-Sample / Walk-Forward / Live Shadow قوية ومتسقة، ثم قرار منفصل لاحقًا.
 
-## ما الجديد في V1.22؟
+## ما الجديد في V1.23؟
 
-V1.22 تضيف **Frozen-entry Live Shadow Target**: بدلاً من إعادة تقييم الصفقة لاحقًا بمعلومات أحدث، تستخدم المنظومة `historical_analogs` و`adaptive_risk_plan` المحفوظين في Learning Vector عند **لحظة ENTRY نفسها**، ثم تعيد بناء الهدف الذي كان Historical Target Advisor سيختاره وقت الدخول.
+V1.23 تضيف **Target Evidence Consensus Gate**. هذه الطبقة لا تبحث عن صفقة ولا تغيّر TP؛ وظيفتها منع الترقية المبكرة لأي منطق أهداف تعلمناه تاريخيًا.
 
-هذا يعني أن المقارنة بين الهدف الفعلي والهدف التاريخي لا تستفيد من معلومات وصلت بعد فتح الصفقة.
+حتى يمر Gate يجب أن تجتمع أدلة مستقلة:
 
-### ما الذي يُقاس؟
+- نجاح Full Historical Target Walk-Forward على **عقلين على الأقل**.
+- لكل عقل ناجح: عينة Walk-Forward كافية + Holdout موجب + عدم تضخم Drawdown بأكثر من الحد المحدد.
+- `LIVE_SHADOW_OUTPERFORMS` في Frozen-entry Live Shadow.
+- عدد كافٍ من المقارنات الحية المحسومة.
+- عدد كافٍ من الحالات التي غيّر فيها Advisor الهدف فعلًا.
+- Resolution Coverage كافية.
+- Holdout حي موجب بدون تضخم غير مقبول في Drawdown.
 
-- Baseline target الذي نفذه Risk Engine فعليًا.
-- Shadow target المعاد بناؤه من دليل ENTRY المجمد.
-- عدد الصفقات المؤهلة.
-- عدد المرات التي غيّر فيها Advisor الهدف.
-- Resolution Coverage.
-- Mean R / Win Rate / Profit Factor / Max Drawdown R.
-- Holdout زمني أخير.
-- الأداء حسب SCALP / INTRADAY / SWING.
+إذا فشلت أي بوابة تكون النتيجة:
 
-إذا أغلق النظام الصفقة قبل أن نعرف هل Shadow target أعلى كان سيُضرب لاحقًا، تصبح المقارنة `UNRESOLVED` وتُستبعد بدل اختراع نتيجة.
+`NOT_READY_FOR_TARGET_INFLUENCE`
 
-حتى لو ظهر `LIVE_SHADOW_OUTPERFORMS` تبقى:
+وإذا اجتمعت جميعها تصبح فقط:
+
+`BOUNDED_SHADOW_EXPERIMENT_CANDIDATE`
+
+حتى في هذه الحالة:
 
 - `auto_apply = false`
-- `weight_in_risk_engine = 0`
-- التنفيذ الحقيقي معطّل.
+- `target_execution_weight = 0`
+- `master_weight = 0`
+- `real_execution_enabled = false`
 
-لا يُفكر في أي تأثير فعلي على الهدف قبل اتفاق دليلين منفصلين:
+أي أن النجاح يسمح فقط بتصميم **مرحلة بحثية محدودة لاحقة**، وليس بتغيير التنفيذ تلقائيًا.
 
-1. V1.21 Full Historical Target Walk-Forward.
-2. V1.22 Frozen-entry Live Shadow.
+## طبقات الإثبات الحالية
 
-## المكونات الحالية
+1. Feature Edge Lab.
+2. Incremental Feature Walk-Forward.
+3. Historical Setup Memory.
+4. Analog Edge Validation.
+5. Historical Target Advisor `1R→5R`.
+6. Journal Target Policy Validation.
+7. Full Historical Target Walk-Forward لكل عقل.
+8. Frozen-entry Live Shadow Target.
+9. Target Evidence Consensus Gate.
+10. Readiness Gate للنظام كاملًا.
 
-- 18 فريمًا من `1m` حتى `1Y`.
-- مؤشرات فنية + Market Structure + Liquidity + Patterns + مئات Background Features.
-- Cycle/Valuation Models.
-- Network وDerivatives في `SHADOW_ONLY`.
-- Feature Edge Lab + Incremental Walk-Forward.
-- Historical Setup Memory + Analog Edge Validation.
-- Long Historical Replay Memory + Historical Signature Cache.
-- Historical Target Advisor `1R→5R`.
-- Journal Target Policy Validation V1.20.
-- Full Historical Target Walk-Forward V1.21.
-- Frozen-entry Live Shadow Target V1.22.
-- Adaptive paper risk/leverage، صفقة واحدة فقط، وحد حماية رأسمال تجريبي.
-- Learning Journal + Backtesting + Readiness Gate.
+## السوق والفريمات
 
-## Full Historical Walk-Forward V1.21
-
-- يعيد تشغيل العقول الثلاثة + MASTER عند نقاط تاريخية.
-- لا يستخدم إلا الشموع المغلقة حتى النقطة الجارية.
-- يختار Local Historical Target من السجلات السابقة فقط.
-- يقرأ Future Window بعد تجميد القرار.
-- يقارن Baseline vs Advisor على مسار شموع كامل.
-- يعرض Holdout وRegime breakdown.
-- `STOP_FIRST_CONSERVATIVE` يبقى مطبقًا.
+النظام يقرأ 18 فريمًا من `1m` حتى `1Y`، مع طبقات Micro / Intraday / Swing / Macro. الفريمات الأكبر تدخل في السياق والاتجاه البنيوي، والفريمات الصغيرة تدخل في التوقيت والتنفيذ.
 
 ## إدارة المخاطرة
 
 - رأس المال التجريبي: `$1,000`.
-- صفقة واحدة فقط.
+- صفقة واحدة فقط في أي لحظة.
 - LONG/SHORT وحجم المركز والرافعة Paper تُحدد تلقائيًا.
 - الرافعة الافتراضية القصوى: `5x`.
 - مخاطرة Stop ديناميكية بحد أعلى افتراضي يقارب `1.4%`.
-- الأهداف الحالية من `1R` حتى `5R`.
+- الأهداف الحالية من `1R` حتى `5R` حسب Risk Engine الحالي.
 - Soft Pause قبل حد الخسارة الكلي.
 - Hard model drawdown limit = `25%` من رأس المال الابتدائي.
+- الأدلة التاريخية/Shadow لا تغيّر التنفيذ حتى اجتياز مراحل التحقق اللاحقة.
 
 ## واجهة الهاتف
 
-واجهة Phone-First وتعرض كل طبقات النظام، ومنها:
+واجهة Phone-First تعرض:
 
 - MASTER والعقول الثلاثة.
 - كل الفريمات من الدقيقة إلى السنة.
@@ -83,40 +76,30 @@ V1.22 تضيف **Frozen-entry Live Shadow Target**: بدلاً من إعادة �
 - Edge Lab + Incremental Walk-Forward.
 - Historical Memory + Analog Validation + Signature Cache.
 - Historical Target Advisor.
-- Journal Target Policy Validation.
 - Full Historical Target Walk-Forward.
-- Live Shadow Target: Baseline vs Frozen-entry Shadow + Coverage + Holdout + Brain breakdown.
+- Live Shadow Target.
+- Target Evidence Consensus Gate مع كل Gate على شكل ✅ / ⛔ وسبب الشرط.
 
 ## API
 
+- `GET /api/target-evidence-gate`
 - `GET /api/live-shadow-target`
 - `GET /api/full-target-walkforward?brain=INTRADAY`
 - `POST /api/full-target-walkforward?brain=INTRADAY&max_points=300`
 
 ## CI
 
-يفحص GitHub Actions:
+GitHub Actions يفحص:
 
 - Python compile.
-- JavaScript syntax حتى `v32.js`.
-- Unit tests، بما فيها No-Lookahead وFrozen-entry Shadow وSTOP_FIRST.
+- JavaScript syntax حتى `v33.js`.
+- Unit tests لكل بوابات Target Evidence.
+- No-lookahead / STOP_FIRST / Frozen-entry evidence.
 - تشغيل التطبيق و`/health`.
-- مزامنة النسخة والواجهة.
-
-## التشغيل
-
-```bash
-python -m venv .venv
-# Windows: .venv\Scripts\activate
-# macOS/Linux: source .venv/bin/activate
-pip install -r requirements.txt
-python run.py
-```
-
-ثم افتح `http://127.0.0.1:8000`.
+- مزامنة رقم النسخة والواجهة مع قدرات الـbackend.
 
 ## المبدأ
 
-`Market Data → Multi-Timeframe Analysis → 3 Brains → MASTER → Adaptive Risk → Historical Memory → Analog Evidence → Target Advisor → Full Historical Walk-Forward → Frozen-entry Live Shadow → Readiness Gate`
+`Market Data → Multi-Timeframe Analysis → 3 Brains → MASTER → Adaptive Risk → Historical Memory → OOS Target Validation → Live Shadow → Evidence Consensus Gate → Unified Readiness`
 
-الهدف ليس كثرة المؤشرات بحد ذاتها، بل استخدام Pool واسع ثم الاحتفاظ فقط بما يثبت Edge إضافيًا ومستقرًا خارج العينة والسوق الحي التجريبي.
+الهدف ليس الوصول إلى نسخة تقول إنها تربح، بل نسخة تستطيع أن **تثبت** أين لديها Edge، ومتى يختفي، ومتى يجب عليها الامتناع عن التداول.
