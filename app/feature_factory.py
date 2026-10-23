@@ -81,9 +81,9 @@ def _obv_slope(candles: list[dict[str, float]], period: int) -> float:
 def feature_pool(candles: list[dict[str, float]]) -> dict[str, float]:
     """Generate a broad numeric feature pool for research/ML.
 
-    The pool deliberately contains many periodized variants. They are features,
-    not independent votes; downstream selection must control collinearity and
-    overfitting with walk-forward validation.
+    Hundreds of periodized features are generated on dense timeframes. They are
+    candidate features, not independent votes. Sparse monthly/yearly frames only
+    emit periods they truly contain, preventing duplicated pseudo-information.
     """
     if len(candles) < 8:
         return {}
@@ -96,43 +96,40 @@ def feature_pool(candles: list[dict[str, float]]) -> dict[str, float]:
     out: dict[str, float] = {}
 
     for p in PERIODS:
-        if len(candles) < min(p, 8):
+        if len(candles) < p:
             continue
-        use = min(p, len(candles))
-        sma = _sma(closes, use)
-        em = ema(closes, use)[-1]
-        rets = _returns(closes, use)
-        ret = close / closes[-use] - 1.0 if use > 1 and closes[-use] else 0.0
-        vol = pstdev(rets) * math.sqrt(use) if len(rets) >= 2 else 0.0
-        hh, ll = max(highs[-use:]), min(lows[-use:])
+        sma = _sma(closes, p)
+        em = ema(closes, p)[-1]
+        rets = _returns(closes, p)
+        ret = close / closes[-p] - 1.0 if p > 1 and closes[-p] else 0.0
+        vol = pstdev(rets) * math.sqrt(p) if len(rets) >= 2 else 0.0
+        hh, ll = max(highs[-p:]), min(lows[-p:])
         donchian = (close - ll) / (hh - ll) if hh > ll else 0.5
-        avg_vol = fmean(volumes[-use:]) if volumes[-use:] else 0.0
-        a = atr(candles, use)
+        avg_vol = fmean(volumes[-p:]) if volumes[-p:] else 0.0
+        a = atr(candles, p)
 
         out[f"ret_{p}"] = ret
-        out[f"momentum_{p}"] = close - closes[-use]
+        out[f"momentum_{p}"] = close - closes[-p]
         out[f"sma_dist_{p}"] = close / sma - 1.0 if sma else 0.0
         out[f"ema_dist_{p}"] = close / em - 1.0 if em else 0.0
         out[f"rsi_{p}"] = rsi(closes, max(2, min(p, len(closes) - 1))) / 100.0 - 0.5
         out[f"atr_pct_{p}"] = a / close if close else 0.0
         out[f"realized_vol_{p}"] = vol
-        out[f"zscore_{p}"] = _zscore(closes, use)
+        out[f"zscore_{p}"] = _zscore(closes, p)
         out[f"donchian_pos_{p}"] = donchian - 0.5
         out[f"range_pct_{p}"] = (hh - ll) / close if close else 0.0
         out[f"volume_ratio_{p}"] = volume_now / avg_vol - 1.0 if avg_vol else 0.0
 
     for p in FLOW_PERIODS:
-        use = min(p, len(candles))
-        if use < 8:
+        if len(candles) < p:
             continue
-        stoch = _stochastic(candles, use)
+        stoch = _stochastic(candles, p)
         out[f"stoch_{p}"] = stoch / 100.0 - 0.5
         out[f"williams_r_{p}"] = stoch / 100.0 - 0.5
-        out[f"cci_{p}"] = max(-4.0, min(4.0, _cci(candles, use) / 100.0))
-        out[f"cmf_{p}"] = max(-1.0, min(1.0, _cmf(candles, use)))
-        out[f"obv_slope_{p}"] = max(-1.0, min(1.0, _obv_slope(candles, use)))
+        out[f"cci_{p}"] = max(-4.0, min(4.0, _cci(candles, p) / 100.0))
+        out[f"cmf_{p}"] = max(-1.0, min(1.0, _cmf(candles, p)))
+        out[f"obv_slope_{p}"] = max(-1.0, min(1.0, _obv_slope(candles, p)))
 
-    # Candle anatomy / gap / volume-pressure features.
     for lag in range(1, min(11, len(candles))):
         c = candles[-lag]
         o, h, l, cl = map(float, (c["open"], c["high"], c["low"], c["close"]))
@@ -156,7 +153,6 @@ def feature_summary(features: dict[str, float]) -> dict[str, Any]:
 
     family_scores: dict[str, float] = {}
     for family, values in families.items():
-        # Robust bounded mean: avoids one extreme oscillator dominating.
         bounded = [max(-1.0, min(1.0, v)) for v in values]
         family_scores[family] = fmean(bounded) if bounded else 0.0
 
