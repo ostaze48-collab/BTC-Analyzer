@@ -1,79 +1,64 @@
-# BTC AI Trader V1
+# BTC AI Trader V1.15
 
-نسخة بحث ومحاكاة (Paper Trading) لنظام BTCUSDT متعدد العقول.
+منظومة بحث ومحاكاة **Paper Trading فقط** لتحليل BTCUSDT عبر ثلاثة عقول مترابطة: `SCALP` و`INTRADAY` و`SWING`، ثم اختيار صفقة واحدة بواسطة `MASTER`.
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/ostaze48-collab/BTC-Analyzer)
+> التداول الحقيقي معطّل. لا يتم الانتقال إليه إلا بعد اجتياز Readiness Gate واختبارات Out-of-Sample/Walk-Forward طويلة بما يكفي.
 
-## النشر على Render
+## ما تعمل عليه المنظومة الآن
 
-المستودع يحتوي على `render.yaml` و`Dockerfile` وHealth Check عند `/health`.
-بعد إنشاء Blueprint لأول مرة، يتم النشر تلقائيًا من فرع `main` فقط بعد نجاح GitHub CI.
+- قراءة متعددة الفريمات من `1m` حتى `1Y` عبر 18 فريمًا.
+- مؤشرات واتجاه وزخم وحجم وتقلب وVWAP وEMA/RSI/MACD/ATR ومئات Background Features.
+- Support/Resistance، Swing High/Low، BOS، CHoCH، FVG، Order Blocks، Liquidity Sweeps، Trend Channels.
+- Candlestick + Classical Patterns كعوامل تأكيد لا كإشارات منفردة.
+- Cycle/Valuation Context: Power Law، HPR/Rainbow، Mayer، Pi Cycle، 4-Year SMA.
+- Network Intelligence وDerivatives Intelligence في وضع `SHADOW_ONLY` حتى تثبت فائدتها خارج العينة.
+- Feature Edge Lab: فصل زمني Train/Test لقياس فائدة الخصائص.
+- Incremental Edge Walk-Forward: مقارنة Baseline مقابل Baseline+Feature filter عبر نوافذ لاحقة.
+- Historical Setup Memory: يقارن الصفقة المرشحة بحالات شارت سابقة مشابهة ويقيس ما حدث بعدها بـR multiples وقاعدة STOP_FIRST المحافظة.
+- Learning Journal: يحفظ Features عند الدخول والخروج، MFE/MAE، Regime، العقل، والنتيجة.
+- Replay/Backtesting لنفس منطق العقول وإدارة المخاطر.
 
-## ما الذي تنفذه V1؟
+## إدارة الصفقة والمخاطرة
 
-- بيانات BTCUSDT حية من Binance public market-data endpoints، بدون API key.
-- إعادة اتصال تلقائية + أكثر من endpoint رسمي احتياطي عند تعطل المصدر.
-- 5 فريمات: `1m`, `5m`, `15m`, `1h`, `4h`.
-- ثلاثة عقول مترابطة:
-  - SCALP
-  - INTRADAY
-  - SWING
-- Master Selector:
-  - Safety Score
-  - Profit Score
-  - Expected Value (EV)
-  - Risk/Reward
-  - Consensus
-  - Risk Gate
+- رأس المال التجريبي الابتدائي: `$1,000`.
 - صفقة واحدة فقط في أي لحظة.
-- رأس مال افتراضي ابتدائي: `$1,000`.
-- مخاطرة أولية: `0.75%` من رأس المال لكل صفقة.
-- TP1 / TP2 / TP3.
-- TP1 يغلق 30% وينقل SL إلى Break-even.
-- TP2 يغلق 40% وينقل SL إلى TP1.
-- TP3 يغلق الباقي.
-- Early Exit عندما يظهر إجماع قوي من عقلين بعكس الصفقة المفتوحة.
-- SQLite لتسجيل الصفقات والنتائج.
-- واجهة عربية متجاوبة للهاتف والكمبيوتر.
-- TradingView Lightweight Charts 5.2.1 لعرض الشموع والخطوط.
+- النظام يحدد `LONG/SHORT` وحجم المركز والرافعة Paper تلقائيًا.
+- الرافعة الافتراضية القصوى في Paper: `5x`.
+- المخاطرة عند Stop ديناميكية وبحد أقصى افتراضي يقارب `1.4%` للصفقة الأقوى، مع خفضها عند Drawdown.
+- أهداف ديناميكية من `1R` حتى `5R` حسب قوة الفرصة والعقل وحالة السوق.
+- توقف وقائي عن فتح صفقات جديدة قبل حد الخسارة الكلي.
+- الحد الصلب للنموذج التجريبي: `25%` من رأس المال الابتدائي، مع التنبيه أن الانزلاق/gaps في السوق الحقيقي قد يتجاوز أي حد برمجي.
 
-> **مهم:** هذه النسخة لا تتصل بحساب تداول ولا تنفذ أموالًا حقيقية.
+## طبقات التحقق
 
----
+لا يتم اعتبار أي Feature أو مصدر جديد مفيدًا لمجرد أنه يبدو جيدًا تاريخيًا:
 
-## هيكل المشروع
+1. Feature Pool واسع.
+2. Chronological Edge Lab.
+3. Incremental Walk-Forward.
+4. Shadow Trial بوزن صفر.
+5. Full-engine OOS replay.
+6. Paper/Shadow performance.
+7. Readiness Gate.
+8. فقط بعد ذلك يمكن بحث الانتقال الحقيقي يدويًا.
 
-```text
-btc_ai_trader_v1/
-├─ run.py
-├─ requirements.txt
-├─ .env.example
-├─ README.md
-├─ render.yaml
-├─ Dockerfile
-├─ app/
-│  ├─ config.py
-│  ├─ db.py
-│  ├─ indicators.py
-│  ├─ market.py
-│  ├─ brains.py
-│  ├─ master.py
-│  ├─ trade_manager.py
-│  ├─ engine.py
-│  ├─ main.py
-│  └─ static/
-│     ├─ index.html
-│     ├─ app.js
-│     └─ styles.css
-└─ tests/
-   └─ test_master.py
-```
+Historical Analog وNetwork وDerivatives لا يغيرون MASTER حاليًا (`weight = 0`).
 
-## التشغيل على Windows / macOS / Linux
+## واجهة الهاتف
 
-### 1) ثبّت Python 3.11 أو أحدث
+الواجهة Phone-First وتعرض:
 
-### 2) افتح Terminal داخل المجلد
+- قرار MASTER والعقول الثلاثة.
+- جميع الفريمات من الدقيقة إلى السنة.
+- الشارت والرسومات الفنية.
+- الصفقة النشطة وحجمها والرافعة والمخاطرة والأهداف.
+- Market Regime وCycle Models.
+- Network/Derivatives Shadow data.
+- Feature Edge Lab وIncremental Walk-Forward.
+- Historical Setup Memory ونتائج الحالات السابقة المشابهة.
+- Backtest وLearning Journal وسجل الصفقات.
+
+## التشغيل محليًا
 
 ```bash
 python -m venv .venv
@@ -91,83 +76,49 @@ macOS/Linux:
 source .venv/bin/activate
 ```
 
-### 3) ثبّت المكتبات
+ثم:
 
 ```bash
 pip install -r requirements.txt
-```
-
-### 4) شغّل النظام
-
-```bash
 python run.py
 ```
 
-ثم افتح:
+وافتح:
 
 ```text
 http://127.0.0.1:8000
 ```
 
-ولفتحه من هاتف على نفس شبكة Wi‑Fi، استخدم IP الكمبيوتر مثل:
+## CI والنشر
+
+GitHub Actions يتحقق من:
+
+- Python compile.
+- Syntax لكل ملفات JavaScript الحالية.
+- Unit Tests.
+- تشغيل التطبيق و`/health`.
+- مزامنة واجهة الإصدار مع ملفات V1.12+.
+
+خدمة Render المرتبطة بفرع `main` تنشر تلقائيًا بعد نجاح checks حسب إعداد الخدمة.
+
+## Environment Variables الأساسية
 
 ```text
-http://192.168.1.10:8000
-```
-
-قد تحتاج السماح لـPython عبر Windows Firewall.
-
----
-
-## منطق الاختيار
-
-كل عقل يصنع Trade Proposal. ثم يقوم Master بما يلي:
-
-1. حساب Safety Score.
-2. حساب Profit Score.
-3. التحقق من EV > 0.
-4. التحقق من R:R.
-5. التحقق من مسافة SL.
-6. إدخال توافق العقول في التقييم.
-7. استبعاد أي صفقة لا تجتاز Risk Gate.
-8. اختيار أعلى Risk-adjusted opportunity.
-9. فتح صفقة واحدة فقط.
-10. قفل أي Entries جديدة حتى إغلاق الصفقة.
-
-## إعدادات مهمة
-
-يمكن تعديل القيم كـEnvironment Variables:
-
-```text
+BTC_SYMBOL=BTCUSDT
 PAPER_START_CAPITAL=1000
-RISK_PER_TRADE=0.0075
 PAPER_FEE_RATE=0.001
 MIN_CONFIDENCE=65
 MIN_SAFETY_SCORE=68
 MIN_RR=1.5
 MAX_STOP_PCT=2.5
+MAX_PAPER_LEVERAGE=5
+MAX_RISK_PER_TRADE=0.014
+MAX_TOTAL_DRAWDOWN=0.25
+SOFT_PAUSE_DRAWDOWN=0.23
 ```
 
-## حدود V1
+## مبدأ المشروع
 
-هذه النسخة الأولى **لا** تحتوي بعد على:
+`Market Data → Multi-Timeframe Analysis → 3 Brains → MASTER → Adaptive Risk → One Trade → Historical Evidence → Journal → Walk-Forward Learning → Readiness Gate`
 
-- ML/FreqAI training.
-- Order Blocks / FVG الكامل.
-- رسم Trendlines تفاعلية آلية.
-- Backtester تاريخي مستقل.
-- تنفيذ حقيقي في Exchange.
-- أخبار / Sentiment / Order Book.
-
-الهدف من V1 هو أولًا التأكد من أن:
-`Market Data → 3 Brains → Master → One Trade → Trade Management → Journal`
-تعمل كنظام واحد بثبات.
-
-## الخطوة المقترحة لـ V1.1
-
-- Backtesting لبيانات تاريخية.
-- تسجيل MFE / MAE.
-- مقارنة أداء SCALP / INTRADAY / SWING.
-- تحسين أوزان Master من نتائج فعلية.
-- إضافة FVG / BOS / CHoCH بشكل أعمق.
-- إضافة Replay Mode سريع لاختبار آلاف الصفقات.
+الهدف ليس زيادة عدد المؤشرات، بل استخدام Pool واسع ثم الاحتفاظ فقط بما يثبت Edge إضافيًا ومستقرًا خارج العينة.

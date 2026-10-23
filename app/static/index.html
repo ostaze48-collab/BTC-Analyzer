@@ -7,7 +7,7 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>BTC AI Trader V1.11</title>
+  <title>BTC AI Trader V1.15</title>
   <link rel="stylesheet" href="/static/styles.css" />
   <link rel="stylesheet" href="/static/backtest.css" />
   <link rel="stylesheet" href="/static/structure.css" />
@@ -17,8 +17,8 @@
 <body>
   <header class="app-header">
     <div class="brand">
-      <h1>BTC AI TRADER <span>V1.11</span></h1>
-      <p>3 عقول · 18 فريم 1m→1Y · Cycle + Network + Derivatives · صفقة واحدة</p>
+      <h1>BTC AI TRADER <span>V1.15</span></h1>
+      <p>3 عقول · 18 فريم 1m→1Y · Cycle + Network + Derivatives + Historical Memory · صفقة واحدة</p>
     </div>
     <div class="pricebox"><div id="conn" class="pill">CONNECTING</div><strong id="price">—</strong><small>BTCUSDT</small></div>
   </header>
@@ -27,7 +27,7 @@
     <section id="overview" class="top-grid section-overview">
       <article class="card master"><div class="card-title">قرار MASTER</div><div id="masterAction" class="decision wait">BOOTING</div><div id="masterMessage" class="muted">تحميل البيانات...</div><div id="winner"></div><div id="masterExplain" class="master-explain"></div></article>
       <article class="card capital-card"><div class="card-title">رأس المال التجريبي</div><div class="metric-row"><span>البداية</span><b id="startCapital">$1,000</b></div><div class="metric-row"><span>الحالي</span><b id="capital">—</b></div><div class="metric-row"><span>صافي P/L</span><b id="netPnl">—</b></div><div class="metric-row"><span>Win rate</span><b id="winRate">—</b></div></article>
-      <article class="card lock-card"><div class="card-title">قفل التنفيذ</div><div id="tradeLock" class="lock open">🔓 لا توجد صفقة مفتوحة</div><div class="metric-row"><span>المخاطرة/صفقة</span><b>0.75%</b></div><div class="metric-row"><span>أقصى صفقة نشطة</span><b>1</b></div><div class="metric-row"><span>التحليل</span><b>Closed candles</b></div></article>
+      <article class="card lock-card"><div class="card-title">قفل التنفيذ</div><div id="tradeLock" class="lock open">🔓 لا توجد صفقة مفتوحة</div><div class="metric-row"><span>المخاطرة/صفقة</span><b>Adaptive ≤1.4%</b></div><div class="metric-row"><span>أقصى صفقة نشطة</span><b>1</b></div><div class="metric-row"><span>التحليل</span><b>Closed candles</b></div></article>
     </section>
 
     <section id="activeSection" class="bottom-grid section-active">
@@ -80,12 +80,24 @@
     </section>
 
     <section id="tradesSection" class="card section-trades"><div class="card-title">آخر الصفقات</div><div class="table-wrap"><table><thead><tr><th>#</th><th>العقل</th><th>الاتجاه</th><th>الدخول</th><th>الخروج</th><th>P/L</th><th>السبب</th></tr></thead><tbody id="tradesBody"></tbody></table></div></section>
-    <div class="notice">V1.11 للمحاكاة والبحث · Network/Derivatives تبدأ Shadow-only · التداول الحقيقي معطّل</div>
+    <div class="notice">V1.15 للمحاكاة والبحث · كل طبقات الذكاء والتعلم التاريخي متزامنة · التداول الحقيقي معطّل حتى اجتياز Readiness Gate</div>
   </main>
 
   <nav class="mobile-nav" aria-label="التنقل السريع"><a href="#overview"><span>⌂</span><small>الرئيسية</small></a><a href="#brainsSection"><span>◉</span><small>العقول</small></a><a href="#chartSection"><span>⌁</span><small>الشارت</small></a><a href="#learningSection"><span>↗</span><small>التعلم</small></a><a href="#backtestSection"><span>▶</span><small>الاختبار</small></a></nav>
 
   <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5.2.1/dist/lightweight-charts.standalone.production.js"></script>
-  <script src="/static/app.js"></script><script src="/static/structure.js"></script><script src="/static/patterns.js"></script><script src="/static/learning.js"></script><script src="/static/backtest.js"></script><script src="/static/v18.js"></script><script src="/static/v19.js"></script><script src="/static/v20.js"></script><script src="/static/v21.js"></script>
+  <script src="/static/app.js"></script>
+  <script src="/static/structure.js"></script>
+  <script src="/static/patterns.js"></script>
+  <script src="/static/learning.js"></script>
+  <script src="/static/backtest.js"></script>
+  <script src="/static/v18.js"></script>
+  <script src="/static/v19.js"></script>
+  <script src="/static/v20.js"></script>
+  <script src="/static/v21.js"></script>
+  <script src="/static/v22.js"></script>
+  <script src="/static/v23.js"></script>
+  <script src="/static/v24.js"></script>
+  <script src="/static/v25.js"></script>
 </body>
 </html>

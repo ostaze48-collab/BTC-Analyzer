@@ -15,7 +15,9 @@ from .cycle_walkforward import CycleWalkForward
 from .db import Database
 from .edge_lab import analyze_feature_edge
 from .engine import TradingEngine
+from .incremental_edge import incremental_walkforward
 from .readiness import readiness_report
+from .version import APP_LABEL, APP_NAME, APP_VERSION
 
 
 class Hub:
@@ -65,7 +67,7 @@ async def lifespan(app: FastAPI):
     await engine.stop()
 
 
-app = FastAPI(title="BTC AI Trader V1.13", version="1.13.0", lifespan=lifespan)
+app = FastAPI(title=f"{APP_NAME} {APP_LABEL}", version=APP_VERSION, lifespan=lifespan)
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -79,7 +81,9 @@ async def home():
 async def health():
     return {
         "ok": True,
-        "service": "BTC AI Trader V1.13",
+        "service": f"{APP_NAME} {APP_LABEL}",
+        "version": APP_VERSION,
+        "version_label": APP_LABEL,
         "market_connected": bool(engine and engine.market.connected),
         "backtest_running": backtester.running,
         "cycle_validation_running": cycle_validator.running,
@@ -90,6 +94,9 @@ async def health():
         "learning_journal": True,
         "feature_factory": True,
         "feature_edge_lab": True,
+        "incremental_walkforward": True,
+        "historical_analogs": True,
+        "historical_analogs_mode": "SHADOW_ONLY",
         "feature_auto_promotion": False,
         "cycle_models": True,
         "readiness_gate": True,
@@ -104,10 +111,17 @@ async def health():
     }
 
 
+@app.get("/api/version")
+async def api_version():
+    return {"name": APP_NAME, "version": APP_VERSION, "label": APP_LABEL}
+
+
 @app.get("/api/state")
 async def api_state():
     state = engine.state()
     state["readiness"] = _readiness()
+    state["app_version"] = APP_VERSION
+    state["app_version_label"] = APP_LABEL
     return state
 
 
@@ -132,6 +146,17 @@ async def api_readiness():
 async def api_edge_lab(limit: int = 5000):
     samples = db.edge_samples(max(1, min(limit, 20000)))
     return analyze_feature_edge(samples)
+
+
+@app.get("/api/incremental-edge")
+async def api_incremental_edge(limit: int = 5000, max_features: int = 250):
+    samples = db.edge_samples(max(1, min(limit, 20000)))
+    return incremental_walkforward(samples, max_features=max(10, min(max_features, 1000)))
+
+
+@app.get("/api/historical-analogs")
+async def api_historical_analogs():
+    return engine.historical_analogs
 
 
 @app.get("/api/network")
