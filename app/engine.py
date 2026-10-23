@@ -4,7 +4,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
-from .brains import analyze_brains
+from .brains import analyze_brains, layer_context
 from .db import Database
 from .indicators import snapshot
 from .market import MarketData
@@ -21,12 +21,8 @@ class TradingEngine:
         self.trade_manager = TradeManager(db)
         self.market = MarketData(self.on_market_event)
         self.snapshots: dict[str, dict[str, Any]] = {}
-        self.master: dict[str, Any] = {
-            "action": "BOOTING",
-            "winner": None,
-            "proposals": [],
-            "message": "Loading market history",
-        }
+        self.layers: dict[str, Any] = {}
+        self.master: dict[str, Any] = {"action": "BOOTING", "winner": None, "proposals": [], "message": "Loading market history"}
         self.last_analysis_at: str | None = None
         self._analysis_lock = asyncio.Lock()
 
@@ -38,24 +34,22 @@ class TradingEngine:
         await self.market.stop()
 
     def _build_snapshots(self) -> dict[str, dict[str, Any]]:
-        return {
-            interval: snapshot(self.market.get(interval))
-            for interval in self.market.candles
-        }
+        # Trading decisions use only confirmed/closed candles on every timeframe.
+        # The UI still receives the current live candle separately for charting.
+        return {interval: snapshot(self.market.get_closed(interval)) for interval in self.market.candles}
 
     async def analyze(self, force: bool = False) -> None:
         if self._analysis_lock.locked() and not force:
             return
-
         async with self._analysis_lock:
             self.snapshots = self._build_snapshots()
+            self.layers = layer_context(self.snapshots)
             proposals = analyze_brains(self.snapshots)
             advisory = select_trade(proposals)
+            advisory["timeframe_layers"] = self.layers
 
             active = self.trade_manager.active
             price = self.market.last_price
-
-            # While a trade is active, the three brains become an advisory committee.
             if active and price:
                 opposite = [
                     p for p in advisory["proposals"]
@@ -65,13 +59,10 @@ class TradingEngine:
                 ]
                 strong_opposite = [p for p in opposite if p.get("final_score", 0) >= 84]
                 if len(strong_opposite) >= 2:
-                    self.trade_manager.early_exit(
-                        price,
-                        reason="EARLY_EXIT_OPPOSITE_CONSENSUS",
-                    )
-                    # Re-run selection against the now-flat account.
+                    self.trade_manager.early_exit(price, reason="EARLY_EXIT_OPPOSITE_CONSENSUS")
                     proposals = analyze_brains(self.snapshots)
                     advisory = select_trade(proposals)
+                    advisory["timeframe_layers"] = self.layers
                     active = None
 
             if not active and advisory["action"] in ("LONG", "SHORT") and advisory["winner"]:
@@ -86,45 +77,31 @@ class TradingEngine:
             candle = event["candle"]
             price = float(candle["close"])
             closed_trade = self.trade_manager.on_price(price)
+            await self.broadcast({"type": "candle", "interval": event["interval"], "candle": candle, "price": price})
 
-            await self.broadcast(
-                {
-                    "type": "candle",
-                    "interval": event["interval"],
-                    "candle": candle,
-                    "price": price,
-                }
-            )
-
-            # Primary decision cadence: once per closed 1m candle.
+            # Re-evaluate once per confirmed 1m close. Higher timeframes are
+            # automatically incorporated when their confirmed candle changes.
             if event["interval"] == "1m" and event["closed"]:
                 await self.analyze()
             elif closed_trade:
-                # A finished trade immediately unlocks the selector.
                 await self.analyze(force=True)
             else:
-                # Keep live P/L and price visible without re-running the brains.
                 await self.broadcast({"type": "state", "state": self.state()})
-
         elif event["type"] in ("connection", "history_ready", "history_error"):
             await self.broadcast({"type": event["type"], **event})
 
     def state(self) -> dict[str, Any]:
         price = self.market.last_price
         return {
-            "symbol": "BTCUSDT",
-            "price": price,
-            "connected": self.market.connected,
-            "last_analysis_at": self.last_analysis_at,
-            "snapshots": self.snapshots,
-            "master": self.master,
-            "active_trade": self.trade_manager.state(price),
-            "stats": self.db.stats(),
+            "symbol": "BTCUSDT", "price": price, "connected": self.market.connected,
+            "last_analysis_at": self.last_analysis_at, "snapshots": self.snapshots,
+            "timeframe_layers": self.layers, "master": self.master,
+            "active_trade": self.trade_manager.state(price), "stats": self.db.stats(),
             "settings": {
-                "risk_per_trade_pct": 0.75,
-                "paper_fee_pct_each_side": 0.10,
-                "one_trade_only": True,
-                "paper_only": True,
+                "risk_per_trade_pct": 0.75, "paper_fee_pct_each_side": 0.10,
+                "one_trade_only": True, "paper_only": True,
+                "analysis_uses_closed_candles": True,
+                "intervals": list(self.market.candles.keys()),
             },
         }
 
