@@ -16,6 +16,7 @@ from .cycle_walkforward import CycleWalkForward
 from .db import Database
 from .edge_lab import analyze_feature_edge
 from .engine import TradingEngine
+from .full_target_walkforward import run_full_target_walkforward
 from .incremental_edge import incremental_walkforward
 from .readiness import readiness_report
 from .target_advisor import build_historical_target_advisor_from_summary
@@ -58,6 +59,8 @@ engine: TradingEngine | None = None
 backtester = BacktestEngine()
 cycle_validator = CycleWalkForward()
 last_execution_replay: dict[str, Any] | None = None
+full_target_results: dict[str, dict[str, Any]] = {}
+full_target_running: set[str] = set()
 
 
 @asynccontextmanager
@@ -106,6 +109,8 @@ async def health():
         "historical_target_range_r": [1, 5],
         "target_policy_validation": True,
         "target_policy_validation_mode": "JOURNAL_PATH_PARTIAL_VALIDATION",
+        "full_target_walkforward": True,
+        "full_target_walkforward_mode": "FULL_ARCHIVE_TARGET_WALKFORWARD",
         "target_policy_auto_apply": False,
         "long_historical_memory": True,
         "historical_archive_mode": "LAZY_SHADOW_ONLY",
@@ -155,6 +160,7 @@ async def api_readiness():
     report = _readiness()
     report["cycle_validation"] = cycle_validator.last_result
     report["latest_execution_replay"] = last_execution_replay
+    report["full_target_walkforward"] = full_target_results
     return report
 
 
@@ -194,6 +200,55 @@ async def api_target_policy_validation(limit: int = 5000):
     samples = db.edge_samples(safe_limit)
     trades = db.recent_trades(safe_limit)
     return validate_target_policy(samples, trades)
+
+
+def _normalize_brain(brain: str) -> str:
+    value = str(brain or "").upper()
+    if value not in ("SCALP", "INTRADAY", "SWING"):
+        raise HTTPException(400, "brain must be SCALP, INTRADAY or SWING")
+    return value
+
+
+@app.get("/api/full-target-walkforward")
+async def api_full_target_walkforward(brain: str = "INTRADAY"):
+    brain = _normalize_brain(brain)
+    if brain in full_target_running:
+        return {"status": "RUNNING", "brain": brain, "cached": full_target_results.get(brain)}
+    result = full_target_results.get(brain)
+    if result:
+        return result
+    archive = engine.historical_archive.state(brain)
+    return {
+        "status": "NOT_RUN", "brain": brain, "archive": archive,
+        "mode": "FULL_ARCHIVE_TARGET_WALKFORWARD", "auto_apply": False,
+        "weight_in_risk_engine": 0.0,
+    }
+
+
+@app.post("/api/full-target-walkforward")
+async def api_run_full_target_walkforward(brain: str = "INTRADAY", max_points: int = 300):
+    brain = _normalize_brain(brain)
+    max_points = max(80, min(int(max_points), 600))
+    if brain in full_target_running:
+        return {"status": "RUNNING", "brain": brain, "cached": full_target_results.get(brain)}
+
+    archive = engine.historical_archive.schedule(brain)
+    if archive.get("status") not in ("READY", "PARTIAL"):
+        return {
+            "status": "ARCHIVE_LOADING", "brain": brain, "archive": archive,
+            "message": "Deep history is loading in the background. Run again after archive status becomes READY/PARTIAL.",
+            "auto_apply": False, "weight_in_risk_engine": 0.0,
+        }
+
+    full_target_running.add(brain)
+    try:
+        history = engine._history_for_analogs(brain)
+        result = await asyncio.to_thread(run_full_target_walkforward, history, brain, max_points)
+        result["archive"] = engine.historical_archive.state(brain)
+        full_target_results[brain] = result
+        return result
+    finally:
+        full_target_running.discard(brain)
 
 
 @app.get("/api/historical-archive")

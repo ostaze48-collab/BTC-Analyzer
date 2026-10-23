@@ -1,8 +1,52 @@
-# BTC AI Trader V1.20
+# BTC AI Trader V1.21
 
 منظومة بحث ومحاكاة **Paper Trading فقط** لتحليل BTCUSDT عبر ثلاثة عقول مترابطة: `SCALP` و`INTRADAY` و`SWING`، ثم اختيار صفقة واحدة بواسطة `MASTER`.
 
 > التداول الحقيقي معطّل. لا يتم الانتقال إليه إلا بعد اجتياز Readiness Gate واختبارات Out-of-Sample/Walk-Forward طويلة بما يكفي.
+
+## ما الجديد في V1.21؟
+
+V1.21 تضيف **Full Historical Target Walk-Forward** لاختبار ما إذا كان اختيار الهدف من الحالات التاريخية المشابهة يضيف Edge حقيقيًا مقارنة بهدف Risk Engine الحالي.
+
+الاختبار يعمل لكل عقل بشكل مستقل:
+
+- `SCALP` على Anchor `5m`.
+- `INTRADAY` على Anchor `30m`.
+- `SWING` على Anchor `4h`.
+
+وتمت إضافة تاريخ عميق صريح لفريم `30m` الخاص بـINTRADAY، حتى لا يكون هذا العقل محدودًا بتاريخ قصير أثناء المقارنة.
+
+### كيف يمنع Lookahead؟
+
+عند كل نقطة تاريخية:
+
+1. تُبنى Snapshots من الشموع التي أغلقت **حتى تلك اللحظة فقط**.
+2. يعاد تشغيل العقول الثلاثة + `MASTER`.
+3. لا تدخل النقطة للاختبار إلا إذا كان العقل الجاري اختباره هو الفائز فعلًا.
+4. يتم اختيار Local Historical Target من **السجلات السابقة فقط** ذات الاتجاه نفسه والأقرب في البصمة السوقية.
+5. بعد تجميد الهدف، فقط عندها تُقرأ Future Window لقياس النتيجة.
+6. المقارنة تستخدم نفس بنية الخروج 30% / 40% / 30%.
+7. عند لمس Stop والهدف داخل الشمعة نفسها، يبقى `STOP_FIRST_CONSERVATIVE`.
+8. إذا انتهى Horizon بدون Stop أو Target كامل، تُغلق الكمية المتبقية على آخر Close بدل ترك المسار غير محسوم.
+
+### ما الذي تتم مقارنته؟
+
+- Baseline Target من Risk Engine الحالي.
+- Local Historical Target من أقرب السوابق السابقة فقط.
+- Mean R.
+- Win Rate.
+- Profit Factor.
+- Max Drawdown R.
+- Final Holdout.
+- الأداء حسب Market Regime.
+- نسبة المرات التي غيّر فيها Advisor الهدف فعلًا.
+
+حتى لو ظهر `FULL_WALKFORWARD_OUTPERFORMS` تبقى:
+
+- `auto_apply = false`
+- `weight_in_risk_engine = 0`
+
+المرحلة التالية هي Live Shadow Target Policy قبل أي تأثير فعلي على التنفيذ.
 
 ## المكونات الحالية
 
@@ -13,69 +57,26 @@
 - Feature Edge Lab + Incremental Walk-Forward.
 - Historical Setup Memory + Analog Edge Validation.
 - Long Historical Replay Memory + Historical Signature Cache.
-- Historical Target Advisor لاختيار `1R→5R` تاريخيًا بشكل محافظ.
-- **Target Policy Validation V1.20** لمقارنة الهدف الحالي بالهدف التاريخي على مسارات Paper قابلة للحسم.
+- Historical Target Advisor `1R→5R`.
+- Journal Target Policy Validation V1.20.
+- Full Historical Target Walk-Forward V1.21.
 - Adaptive paper risk/leverage، صفقة واحدة فقط، وحد حماية رأسمال تجريبي.
 - Learning Journal + Backtesting + Readiness Gate.
-
-## Target Policy Validation V1.20
-
-V1.20 لا تفترض أن توصية Historical Target Advisor أفضل. بل تعيد تقييم الصفقات المسجلة تحت سياستين:
-
-1. `Baseline`: هدف Risk Engine الذي استخدمته الصفقة فعليًا.
-2. `Advisor`: الهدف الذي كان Historical Target Advisor سيختاره وقت الدخول.
-
-وتطبق على كليهما نفس بنية الخروج الحالية:
-
-- TP1: إغلاق 30%.
-- TP2: إغلاق 40%.
-- TP3: إغلاق 30%.
-- بعد TP1 ينتقل الوقف إلى Entry.
-- بعد TP2 ينتقل الوقف إلى TP1.
-
-### منع النتائج الوهمية
-
-- يتم تحويل MFE إلى `R` باستخدام Stop distance المسجل وقت الدخول.
-- إذا كان المسار المسجل يكفي لحسم الهدف البديل، يتم حساب النتيجة.
-- إذا أغلقت صفقة Paper قبل أن نعرف هل هدف أعلى كان سيُضرب لاحقًا، النتيجة تصبح `UNRESOLVED` وتُستبعد بدل تخمينها.
-- يتم عرض `Resolution Coverage` حتى لا تبدو عينة ناقصة كأنها اختبار كامل.
-- يوجد Holdout زمني في آخر 30% من المقارنات المحسومة.
-- المقارنة تشمل Mean R وWin Rate وProfit Factor وMax Drawdown R.
-- إعلان `JOURNAL_SHADOW_OUTPERFORMS` يحتاج تحسنًا في العينة والـHoldout دون زيادة Drawdown فوق الحدود.
-- `auto_apply = false` و`weight_in_risk_engine = 0` دائمًا في هذه المرحلة.
-
-هذه الطبقة **اختبار جزئي** فقط، لأن Journal لا يحتفظ بالشموع التي حدثت بعد إغلاق الصفقة. المرحلة التالية هي Full Historical Target Walk-Forward على بيانات الشموع نفسها لحسم كل المسارات.
-
-## Historical Target Advisor
-
-- يقارن أهداف `1R` إلى `5R` باستخدام الحالات التاريخية الأقرب.
-- يستخدم Hit Rate من كامل مجموعة الحالات المتشابهة.
-- Laplace smoothing يقلل الثقة الزائدة في العينة الصغيرة.
-- في الوضع المحافظ يعتبر كل non-hit = `-1R`.
-- يبقى `SHADOW_ONLY` ولا يغير التنفيذ.
-
-## Historical Memory
-
-- SCALP: تاريخ أعمق للفريمات الصغيرة والمتوسطة.
-- INTRADAY: أشهر/سنوات حسب الفريم.
-- SWING: عدة سنوات على 4H/1D/1W/1M حيث يتوفر.
-- Signature Cache يبني حتى نحو 720 بصمة موزعة على الذاكرة المتاحة.
-- No-lookahead: لا تُستخدم نقطة تاريخية إذا لم توجد بعدها Future Window كاملة.
-- `STOP_FIRST_CONSERVATIVE` عند تعارض Stop وTarget في الشمعة نفسها.
 
 ## إدارة المخاطرة
 
 - رأس المال التجريبي: `$1,000`.
 - صفقة واحدة فقط.
-- النظام يحدد LONG/SHORT وحجم المركز والرافعة Paper تلقائيًا.
+- LONG/SHORT وحجم المركز والرافعة Paper تُحدد تلقائيًا.
 - الرافعة الافتراضية القصوى: `5x`.
-- مخاطرة Stop ديناميكية بحد أعلى افتراضي يقارب `1.4%` للفرص الأقوى.
+- مخاطرة Stop ديناميكية بحد أعلى افتراضي يقارب `1.4%`.
 - الأهداف الحالية من `1R` حتى `5R`.
-- الحد الصلب للنموذج التجريبي: `25%` من رأس المال الابتدائي، مع Soft Pause قبل الوصول إليه.
+- Soft Pause قبل حد الخسارة الكلي.
+- Hard model drawdown limit = `25%` من رأس المال الابتدائي.
 
 ## واجهة الهاتف
 
-الواجهة Phone-First وتعرض كل طبقات النظام، ومنها:
+واجهة Phone-First وتعرض:
 
 - MASTER والعقول الثلاثة.
 - كل الفريمات من الدقيقة إلى السنة.
@@ -84,18 +85,26 @@ V1.20 لا تفترض أن توصية Historical Target Advisor أفضل. بل �
 - Cycle / Network / Derivatives.
 - Edge Lab + Incremental Walk-Forward.
 - Historical Memory + Analog Validation + Signature Cache.
-- Historical Target Advisor 1R→5R.
-- Target Policy Validation: Baseline vs Advisor + Coverage + Holdout.
+- Historical Target Advisor.
+- Journal Target Policy Validation.
+- Full Historical Target Walk-Forward مع اختيار SCALP / INTRADAY / SWING وعرض Holdout وRegime breakdown.
+
+## API الجديدة
+
+- `GET /api/full-target-walkforward?brain=INTRADAY`
+- `POST /api/full-target-walkforward?brain=INTRADAY&max_points=300`
+
+إذا كان الأرشيف العميق غير جاهز، يقوم POST ببدء تحميله ويعيد `ARCHIVE_LOADING` بدل تشغيل اختبار ناقص.
 
 ## CI
 
 يفحص GitHub Actions:
 
 - Python compile.
-- JavaScript syntax حتى `v30.js`.
-- Unit tests، بما فيها Target Policy counterfactual logic.
+- JavaScript syntax حتى `v31.js`.
+- Unit tests، بما فيها No-Lookahead وSTOP_FIRST وفريمات Anchor العميقة.
 - تشغيل التطبيق و`/health`.
-- مزامنة النسخة والواجهة مع قدرات النظام.
+- مزامنة النسخة والواجهة.
 
 ## التشغيل
 
@@ -111,6 +120,6 @@ python run.py
 
 ## المبدأ
 
-`Market Data → Multi-Timeframe Analysis → 3 Brains → MASTER → Adaptive Risk → Historical Memory → Analog Evidence → Target Advisor → Target Policy Validation → Full OOS Replay → Journal → Readiness Gate`
+`Market Data → Multi-Timeframe Analysis → 3 Brains → MASTER → Adaptive Risk → Historical Memory → Analog Evidence → Target Advisor → Journal Validation → Full Historical Walk-Forward → Shadow Live Validation → Readiness Gate`
 
-الهدف ليس كثرة المؤشرات بحد ذاتها، بل استخدام Pool واسع ثم استبعاد الضوضاء والاحتفاظ فقط بما يثبت Edge إضافيًا ومستقرًا خارج العينة.
+الهدف ليس كثرة المؤشرات بحد ذاتها، بل استخدام Pool واسع ثم الاحتفاظ فقط بما يثبت Edge إضافيًا ومستقرًا خارج العينة.
