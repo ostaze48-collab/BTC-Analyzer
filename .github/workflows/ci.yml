@@ -21,11 +21,21 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Install dependencies
         run: pip install -r requirements.txt
 
       - name: Compile Python
         run: python -m compileall -q app run.py tests
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check app/static/app.js
+          node --check app/static/backtest.js
 
       - name: Unit tests
         run: python -m unittest discover -s tests -v
