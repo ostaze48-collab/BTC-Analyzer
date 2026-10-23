@@ -6,6 +6,7 @@ from typing import Any, Awaitable, Callable
 
 from .analysis import enriched_snapshot
 from .brains import analyze_brains, layer_context
+from .cycle_models import cycle_model_context
 from .db import Database
 from .market import MarketData
 from .master import select_trade
@@ -23,6 +24,7 @@ class TradingEngine:
         self.market = MarketData(self.on_market_event)
         self.snapshots: dict[str, dict[str, Any]] = {}
         self.layers: dict[str, Any] = {}
+        self.cycle: dict[str, Any] = {"available": False, "models": {}, "bias": 0.0, "strength": 0.0}
         self.regime: dict[str, Any] = {"regime": "BOOTING", "direction": "NEUTRAL", "volatility": "NORMAL"}
         self.master: dict[str, Any] = {"action": "BOOTING", "winner": None, "proposals": [], "message": "Loading market history"}
         self.learning_cache: dict[str, Any] = self.db.learning_summary()
@@ -40,7 +42,14 @@ class TradingEngine:
         return {interval: enriched_snapshot(self.market.get_closed(interval)) for interval in self.market.candles}
 
     def _features(self, advisory: dict[str, Any] | None = None) -> dict[str, Any]:
-        return feature_vector(self.snapshots, self.layers, advisory or self.master, self.regime)
+        return feature_vector(self.snapshots, self.layers, advisory or self.master, self.regime, self.cycle)
+
+    def _public_snapshots(self) -> dict[str, dict[str, Any]]:
+        # Thousands of background features stay server-side; only summaries go to phones.
+        return {
+            tf: {k: v for k, v in snap.items() if not k.startswith("_")}
+            for tf, snap in self.snapshots.items()
+        }
 
     def _record_exit(self, closed_trade: dict[str, Any], advisory: dict[str, Any] | None = None) -> None:
         if not closed_trade:
@@ -59,12 +68,14 @@ class TradingEngine:
             return
         async with self._analysis_lock:
             self.snapshots = self._build_snapshots()
-            self.layers = layer_context(self.snapshots)
+            self.cycle = cycle_model_context(self.market.get_closed("1d", limit=500))
+            self.layers = layer_context(self.snapshots, self.cycle)
             self.regime = classify_market_regime(self.snapshots, self.layers)
-            proposals = analyze_brains(self.snapshots)
+            proposals = analyze_brains(self.snapshots, self.cycle)
             advisory = select_trade(proposals)
             advisory["timeframe_layers"] = self.layers
             advisory["market_regime"] = self.regime
+            advisory["cycle_models"] = self.cycle
 
             active = self.trade_manager.active
             price = self.market.last_price
@@ -80,10 +91,11 @@ class TradingEngine:
                     closed = self.trade_manager.early_exit(price, reason="EARLY_EXIT_OPPOSITE_CONSENSUS")
                     if closed:
                         self._record_exit(closed, advisory)
-                    proposals = analyze_brains(self.snapshots)
+                    proposals = analyze_brains(self.snapshots, self.cycle)
                     advisory = select_trade(proposals)
                     advisory["timeframe_layers"] = self.layers
                     advisory["market_regime"] = self.regime
+                    advisory["cycle_models"] = self.cycle
                     active = None
 
             if not active and advisory["action"] in ("LONG", "SHORT") and advisory["winner"]:
@@ -113,16 +125,24 @@ class TradingEngine:
 
     def state(self) -> dict[str, Any]:
         price = self.market.last_price
+        total_features = sum(int((s.get("feature_summary") or {}).get("count", 0)) for s in self.snapshots.values())
         return {
             "symbol": "BTCUSDT", "price": price, "connected": self.market.connected,
-            "last_analysis_at": self.last_analysis_at, "snapshots": self.snapshots,
-            "timeframe_layers": self.layers, "market_regime": self.regime, "master": self.master,
+            "last_analysis_at": self.last_analysis_at, "snapshots": self._public_snapshots(),
+            "timeframe_layers": self.layers, "market_regime": self.regime,
+            "cycle_models": self.cycle, "master": self.master,
             "active_trade": self.trade_manager.state(price), "stats": self.db.stats(),
             "learning": self.learning_cache,
+            "feature_engine": {
+                "total_background_features": total_features,
+                "full_pool_server_side": True,
+                "selection_policy": "bounded_family_vote_then_walk_forward_validation",
+            },
             "settings": {
                 "risk_per_trade_pct": 0.75, "paper_fee_pct_each_side": 0.10,
                 "one_trade_only": True, "paper_only": True, "analysis_uses_closed_candles": True,
                 "intervals": list(self.market.candles.keys()), "pattern_engine": True, "learning_journal": True,
+                "cycle_models": True, "analysis_horizon": "1m→1y",
             },
         }
 
