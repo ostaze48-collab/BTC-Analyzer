@@ -7,7 +7,7 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>BTC AI Trader V1.21</title>
+  <title>BTC AI Trader V1.22</title>
   <link rel="stylesheet" href="/static/styles.css" />
   <link rel="stylesheet" href="/static/backtest.css" />
   <link rel="stylesheet" href="/static/structure.css" />
@@ -17,8 +17,8 @@
 <body>
   <header class="app-header">
     <div class="brand">
-      <h1>BTC AI TRADER <span>V1.21</span></h1>
-      <p>3 عقول · 18 فريم 1m→1Y · Historical Memory + Full Historical Target Walk‑Forward + OOS Learning · صفقة واحدة</p>
+      <h1>BTC AI TRADER <span>V1.22</span></h1>
+      <p>3 عقول · 18 فريم 1m→1Y · Historical Memory + Full Walk‑Forward + Live Shadow Target · صفقة واحدة</p>
     </div>
     <div class="pricebox"><div id="conn" class="pill">CONNECTING</div><strong id="price">—</strong><small>BTCUSDT</small></div>
   </header>
@@ -80,7 +80,7 @@
     </section>
 
     <section id="tradesSection" class="card section-trades"><div class="card-title">آخر الصفقات</div><div class="table-wrap"><table><thead><tr><th>#</th><th>العقل</th><th>الاتجاه</th><th>الدخول</th><th>الخروج</th><th>P/L</th><th>السبب</th></tr></thead><tbody id="tradesBody"></tbody></table></div></section>
-    <div class="notice">V1.21 للمحاكاة والبحث · Historical Memory + Full Historical Walk‑Forward يجمّدان قرار الهدف قبل Future Window ويختبرانه على شموع كاملة · Auto Apply معطّل</div>
+    <div class="notice">V1.22 للمحاكاة والبحث · Historical Memory + Full Walk‑Forward + Frozen-entry Live Shadow Target · لا يوجد Auto Apply ولا تنفيذ حقيقي</div>
   </main>
 
   <nav class="mobile-nav" aria-label="التنقل السريع"><a href="#overview"><span>⌂</span><small>الرئيسية</small></a><a href="#brainsSection"><span>◉</span><small>العقول</small></a><a href="#chartSection"><span>⌁</span><small>الشارت</small></a><a href="#learningSection"><span>↗</span><small>التعلم</small></a><a href="#backtestSection"><span>▶</span><small>الاختبار</small></a></nav>
@@ -105,5 +105,6 @@
   <script src="/static/v29.js"></script>
   <script src="/static/v30.js"></script>
   <script src="/static/v31.js"></script>
+  <script src="/static/v32.js"></script>
 </body>
 </html>
