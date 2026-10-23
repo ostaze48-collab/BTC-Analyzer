@@ -13,6 +13,7 @@ from .backtest import BacktestEngine
 from .config import settings
 from .cycle_walkforward import CycleWalkForward
 from .db import Database
+from .edge_lab import analyze_feature_edge
 from .engine import TradingEngine
 from .readiness import readiness_report
 
@@ -64,7 +65,7 @@ async def lifespan(app: FastAPI):
     await engine.stop()
 
 
-app = FastAPI(title="BTC AI Trader V1.12", version="1.12.0", lifespan=lifespan)
+app = FastAPI(title="BTC AI Trader V1.13", version="1.13.0", lifespan=lifespan)
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -78,7 +79,7 @@ async def home():
 async def health():
     return {
         "ok": True,
-        "service": "BTC AI Trader V1.12",
+        "service": "BTC AI Trader V1.13",
         "market_connected": bool(engine and engine.market.connected),
         "backtest_running": backtester.running,
         "cycle_validation_running": cycle_validator.running,
@@ -88,6 +89,8 @@ async def health():
         "analysis_horizon": "1m→1y",
         "learning_journal": True,
         "feature_factory": True,
+        "feature_edge_lab": True,
+        "feature_auto_promotion": False,
         "cycle_models": True,
         "readiness_gate": True,
         "network_intelligence": "SHADOW_ONLY",
@@ -123,6 +126,12 @@ async def api_readiness():
     report["cycle_validation"] = cycle_validator.last_result
     report["latest_execution_replay"] = last_execution_replay
     return report
+
+
+@app.get("/api/edge-lab")
+async def api_edge_lab(limit: int = 5000):
+    samples = db.edge_samples(max(1, min(limit, 20000)))
+    return analyze_feature_edge(samples)
 
 
 @app.get("/api/network")
