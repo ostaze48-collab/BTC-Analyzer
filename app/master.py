@@ -12,24 +12,26 @@ def _scores(p: dict[str, Any]) -> dict[str, float]:
     rr = float(p.get("rr", 0))
     ev = float(p.get("ev_pct", -99))
     volume_ratio = float(p.get("volume_ratio", 1))
+    macro_strength = float(p.get("macro_strength", 0))
 
     volatility_penalty = min(15.0, max(0.0, (volatility - 1.2) * 7))
     stop_quality = max(0.0, 10.0 - max(0.0, float(p.get("risk_pct", 0)) - 1.0) * 4)
     volume_bonus = min(8.0, max(-3.0, (volume_ratio - 1.0) * 6))
     consensus_bonus = consensus * 12.0
+    macro_adjustment = (5.0 * macro_strength) if p.get("macro_aligned") else (-(14.0 * macro_strength) if p.get("macro_conflict") else 0.0)
 
-    safety = confidence * 0.72 + stop_quality + volume_bonus + consensus_bonus - volatility_penalty
+    sweep = ((p.get("liquidity") or {}).get("sweep") or {})
+    liquidity_adjustment = 0.0
+    if sweep.get("direction"):
+        aligned = (p.get("direction") == "LONG" and sweep.get("direction") == "BULLISH") or (p.get("direction") == "SHORT" and sweep.get("direction") == "BEARISH")
+        liquidity_adjustment = 4.0 if aligned else -5.0
+
+    safety = confidence * 0.72 + stop_quality + volume_bonus + consensus_bonus + macro_adjustment + liquidity_adjustment - volatility_penalty
     safety = max(0.0, min(100.0, safety))
-
     profit = rr * 18.0 + max(0.0, ev) * 22.0
     profit = max(0.0, min(100.0, profit))
-
     final = 0.58 * safety + 0.32 * profit + 0.10 * max(0.0, confidence)
-    return {
-        "safety_score": round(safety, 2),
-        "profit_score": round(profit, 2),
-        "final_score": round(min(100.0, final), 2),
-    }
+    return {"safety_score": round(safety, 2), "profit_score": round(profit, 2), "final_score": round(min(100.0, final), 2)}
 
 
 def risk_gate(p: dict[str, Any]) -> tuple[bool, list[str]]:
@@ -46,6 +48,8 @@ def risk_gate(p: dict[str, Any]) -> tuple[bool, list[str]]:
         reasons.append("Stop distance exceeds maximum")
     if float(p.get("safety_score", 0)) < settings.min_safety_score:
         reasons.append("Safety score below minimum")
+    if p.get("macro_conflict") and float(p.get("macro_strength", 0)) >= 0.65 and float(p.get("safety_score", 0)) < 78:
+        reasons.append("Strong macro conflict")
     return (len(reasons) == 0, reasons)
 
 
@@ -77,10 +81,4 @@ def select_trade(proposals: list[dict[str, Any]]) -> dict[str, Any]:
             winner = None
             action = "NO_TRADE"
             message = "No directional edge"
-
-    return {
-        "action": action,
-        "winner": winner,
-        "proposals": enriched,
-        "message": message,
-    }
+    return {"action": action, "winner": winner, "proposals": enriched, "message": message}
