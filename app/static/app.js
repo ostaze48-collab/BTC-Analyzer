@@ -5,12 +5,20 @@ const num = (x,d=2) => x == null ? "—" : Number(x).toLocaleString(undefined,{m
 let tf = "5m";
 let lastState = null;
 let priceLines = [];
+let renderTimer = null;
+let pendingState = null;
+
+function chartWidth(){
+  const el = $("chart");
+  return Math.max(300, el?.clientWidth || document.documentElement.clientWidth - 20);
+}
 
 const chart = LightweightCharts.createChart($("chart"), {
+  width: chartWidth(),
   layout: { background: { type: "solid", color: "#121722" }, textColor: "#9aa5b5" },
   grid: { vertLines: { color: "#1d2431" }, horzLines: { color: "#1d2431" } },
   rightPriceScale: { borderColor: "#2b3445" },
-  timeScale: { borderColor: "#2b3445", timeVisible: true, secondsVisible: false },
+  timeScale: { borderColor: "#2b3445", timeVisible: true, secondsVisible: false, rightOffset: 4 },
   crosshair: { mode: 0 },
   localization: { locale: "en-US" },
 });
@@ -20,15 +28,23 @@ const candles = chart.addSeries(LightweightCharts.CandlestickSeries, {
   borderVisible: false,
 });
 
-function resize(){ chart.applyOptions({ width: $("chart").clientWidth, height: $("chart").clientHeight }); }
-window.addEventListener("resize", resize); resize();
+function resize(){
+  const el = $("chart");
+  if (!el) return;
+  chart.applyOptions({ width: chartWidth(), height: Math.max(320, el.clientHeight || 430) });
+}
+window.addEventListener("resize", () => requestAnimationFrame(resize));
 
 async function loadCandles() {
-  const r = await fetch(`/api/candles/${tf}?limit=500`);
-  const data = await r.json();
-  candles.setData(data.map(c => ({time:c.time,open:c.open,high:c.high,low:c.low,close:c.close})));
-  chart.timeScale().fitContent();
-  drawLevels();
+  try {
+    const r = await fetch(`/api/candles/${tf}?limit=500`);
+    const data = await r.json();
+    candles.setData(data.map(c => ({time:c.time,open:c.open,high:c.high,low:c.low,close:c.close})));
+    chart.timeScale().fitContent();
+    drawLevels();
+  } catch (e) {
+    console.warn("Candles load failed", e);
+  }
 }
 
 function line(price, title, color, style=2) {
@@ -43,20 +59,14 @@ function drawLevels() {
   if (!lastState) return;
   const t = lastState.active_trade;
   if (t) {
-    line(t.entry,"ENTRY","#60a5fa",0);
-    line(t.stop_loss,"SL","#ef4444",2);
-    line(t.tp1,"TP1","#22c55e",2);
-    line(t.tp2,"TP2","#16a34a",2);
-    line(t.tp3,"TP3","#15803d",2);
+    line(t.entry,"ENTRY","#60a5fa",0); line(t.stop_loss,"SL","#ef4444",2);
+    line(t.tp1,"TP1","#22c55e",2); line(t.tp2,"TP2","#16a34a",2); line(t.tp3,"TP3","#15803d",2);
     return;
   }
   const w = lastState.master?.winner;
   if (w && ["LONG","SHORT"].includes(w.direction)) {
-    line(w.entry,"Candidate Entry","#60a5fa",2);
-    line(w.stop_loss,"Candidate SL","#ef4444",2);
-    line(w.tp1,"TP1","#22c55e",2);
-    line(w.tp2,"TP2","#16a34a",2);
-    line(w.tp3,"TP3","#15803d",2);
+    line(w.entry,"ENTRY?","#60a5fa",2); line(w.stop_loss,"SL?","#ef4444",2);
+    line(w.tp1,"TP1","#22c55e",2); line(w.tp2,"TP2","#16a34a",2); line(w.tp3,"TP3","#15803d",2);
   }
 }
 
@@ -99,15 +109,19 @@ function renderTrade(t) {
 }
 
 async function refreshTrades(){
-  const r = await fetch("/api/trades?limit=20");
-  const rows = await r.json();
-  $("tradesBody").innerHTML = rows.map(t => `<tr>
-    <td>${t.id}</td><td>${t.brain}</td>
-    <td class="${t.direction==="LONG"?"good":"bad"}">${t.direction}</td>
-    <td>${num(t.entry)}</td><td>${num(t.exit_price)}</td>
-    <td class="${Number(t.realized_pnl)>=0?"good":"bad"}">${money(t.realized_pnl)}</td>
-    <td>${t.exit_reason || t.status}</td>
-  </tr>`).join("");
+  try {
+    const r = await fetch("/api/trades?limit=20");
+    const rows = await r.json();
+    $("tradesBody").innerHTML = rows.length ? rows.map(t => `<tr>
+      <td>${t.id}</td><td>${t.brain}</td>
+      <td class="${t.direction==="LONG"?"good":"bad"}">${t.direction}</td>
+      <td>${num(t.entry)}</td><td>${num(t.exit_price)}</td>
+      <td class="${Number(t.realized_pnl)>=0?"good":"bad"}">${money(t.realized_pnl)}</td>
+      <td>${t.exit_reason || t.status}</td>
+    </tr>`).join("") : `<tr><td colspan="7" class="muted">لا توجد صفقات مسجلة بعد.</td></tr>`;
+  } catch (e) {
+    console.warn("Trades refresh failed", e);
+  }
 }
 
 function renderState(s) {
@@ -121,10 +135,8 @@ function renderState(s) {
   $("masterAction").className = "decision " + a;
   $("masterAction").textContent = m.action || "WAIT";
   $("masterMessage").textContent = m.message || "";
-  $("winner").innerHTML = m.winner ? `الأفضل الآن: <b>${m.winner.brain}</b> · Final Score <b>${num(m.winner.final_score)}</b>` : "";
-
-  renderBrains(m);
-  renderTrade(s.active_trade);
+  $("winner").innerHTML = m.winner ? `الأفضل الآن: <b>${m.winner.brain}</b> · Score <b>${num(m.winner.final_score)}</b>` : "";
+  renderBrains(m); renderTrade(s.active_trade);
 
   const st = s.stats || {};
   $("startCapital").textContent = money(st.starting_capital);
@@ -138,45 +150,64 @@ function renderState(s) {
   drawLevels();
 }
 
+function scheduleStateRender(s){
+  pendingState = s;
+  if (renderTimer) return;
+  renderTimer = setTimeout(() => {
+    renderTimer = null;
+    if (pendingState) renderState(pendingState);
+    pendingState = null;
+  }, 250);
+}
+
 document.querySelectorAll("#tfButtons button").forEach(btn => {
   btn.addEventListener("click", async () => {
     document.querySelectorAll("#tfButtons button").forEach(x => x.classList.remove("active"));
-    btn.classList.add("active");
-    tf = btn.dataset.tf;
-    await loadCandles();
+    btn.classList.add("active"); tf = btn.dataset.tf; await loadCandles();
   });
 });
 
 $("resetBtn").addEventListener("click", async () => {
   if (!confirm("تصفير سجل المحاكاة ورأس المال إلى $1000؟")) return;
   const r = await fetch("/api/reset", {method:"POST"});
-  if (!r.ok) {
-    const e = await r.json();
-    alert(e.detail || "تعذر التصفير");
-    return;
-  }
-  renderState(await r.json());
-  await refreshTrades();
+  if (!r.ok) { const e = await r.json(); alert(e.detail || "تعذر التصفير"); return; }
+  renderState(await r.json()); await refreshTrades();
 });
+$("refreshHistory").addEventListener("click", refreshTrades);
+
+function switchView(name){
+  document.querySelectorAll(".mobile-view").forEach(v => v.classList.remove("active"));
+  document.querySelectorAll(".nav-btn").forEach(b => b.classList.remove("active"));
+  $("view-" + name)?.classList.add("active");
+  document.querySelector(`.nav-btn[data-view="${name}"]`)?.classList.add("active");
+  window.scrollTo({top:0,behavior:"instant"});
+  if (name === "chart") requestAnimationFrame(() => { resize(); chart.timeScale().fitContent(); });
+  if (name === "history") refreshTrades();
+}
+document.querySelectorAll(".nav-btn").forEach(btn => btn.addEventListener("click", () => switchView(btn.dataset.view)));
 
 function connectWs() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/ws`);
-  ws.onopen = () => ws.send("hello");
+  let pingTimer = null;
+  ws.onopen = () => {
+    ws.send("hello");
+    pingTimer = setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send("ping"); }, 20000);
+  };
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
-    if (msg.type === "state") {
-      renderState(msg.state);
-      refreshTrades();
-      try { ws.send("ping"); } catch(e) {}
-    } else if (msg.type === "candle" && msg.interval === tf) {
+    if (msg.type === "state") scheduleStateRender(msg.state);
+    else if (msg.type === "candle" && msg.interval === tf) {
       const c = msg.candle;
       candles.update({time:c.time,open:c.open,high:c.high,low:c.low,close:c.close});
     }
   };
-  ws.onclose = () => setTimeout(connectWs, 2000);
+  ws.onclose = () => { if (pingTimer) clearInterval(pingTimer); setTimeout(connectWs, 2000); };
+  ws.onerror = () => ws.close();
 }
+
 loadCandles();
 fetch("/api/state").then(r=>r.json()).then(renderState).catch(()=>{});
 refreshTrades();
+setInterval(refreshTrades, 5000);
 connectWs();
