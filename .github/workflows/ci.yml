@@ -2,7 +2,7 @@ name: BTC AI Trader CI
 
 on:
   push:
-    branches: [main, v1.26-research-evidence-history]
+    branches: [main, v1.27-evidence-stability-window]
   pull_request:
     branches: [main]
 
@@ -58,6 +58,7 @@ jobs:
           node --check app/static/v34.js
           node --check app/static/v35.js
           node --check app/static/v36.js
+          node --check app/static/v37.js
 
       - name: Unit tests
         run: python -m unittest discover -s tests -v

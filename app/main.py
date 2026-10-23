@@ -16,6 +16,7 @@ from .cycle_walkforward import CycleWalkForward
 from .db import Database
 from .edge_lab import analyze_feature_edge
 from .engine import TradingEngine
+from .evidence_stability import evidence_stability_gate
 from .full_target_walkforward import run_full_target_walkforward
 from .incremental_edge import incremental_walkforward
 from .live_shadow_target import validate_live_shadow_target
@@ -129,6 +130,8 @@ async def health():
         "strict_paper_review_mode": "OVERLAPPING_30_60_100_DIAGNOSTIC",
         "research_evidence_history": True,
         "research_evidence_history_mode": "PERSISTENT_MATERIAL_SNAPSHOTS_WITH_STRICT_PAPER",
+        "evidence_stability_window": True,
+        "evidence_stability_window_mode": "24H_TIME_AND_NEW_TRADE_GATE",
         "target_policy_auto_apply": False,
         "long_historical_memory": True,
         "historical_archive_mode": "LAZY_SHADOW_ONLY",
@@ -238,25 +241,19 @@ async def api_historical_target_advisor():
 
 @app.get("/api/target-policy-validation")
 async def api_target_policy_validation(limit: int = 5000):
-    safe_limit = max(1, min(limit, 20000))
-    samples = db.edge_samples(safe_limit)
-    trades = db.recent_trades(safe_limit)
+    safe_limit = max(1, min(limit, 20000)); samples = db.edge_samples(safe_limit); trades = db.recent_trades(safe_limit)
     return validate_target_policy(samples, trades)
 
 
 @app.get("/api/live-shadow-target")
 async def api_live_shadow_target(limit: int = 5000):
-    safe_limit = max(1, min(limit, 20000))
-    samples = db.edge_samples(safe_limit)
-    trades = db.recent_trades(safe_limit)
+    safe_limit = max(1, min(limit, 20000)); samples = db.edge_samples(safe_limit); trades = db.recent_trades(safe_limit)
     return validate_live_shadow_target(samples, trades)
 
 
 @app.get("/api/target-evidence-gate")
 async def api_target_evidence_gate(limit: int = 5000):
-    safe_limit = max(1, min(limit, 20000))
-    samples = db.edge_samples(safe_limit)
-    trades = db.recent_trades(safe_limit)
+    safe_limit = max(1, min(limit, 20000)); samples = db.edge_samples(safe_limit); trades = db.recent_trades(safe_limit)
     live = validate_live_shadow_target(samples, trades)
     return target_evidence_gate(full_target_results, live)
 
@@ -279,6 +276,12 @@ async def api_research_history(limit: int = 240):
     return research_history.report(max(2, min(int(limit), 1000)))
 
 
+@app.get("/api/evidence-stability")
+async def api_evidence_stability(limit: int = 1000):
+    _research_bundle(5000, record=True)
+    return evidence_stability_gate(research_history.report(max(8, min(int(limit), 1000))))
+
+
 def _normalize_brain(brain: str) -> str:
     value = str(brain or "").upper()
     if value not in ("SCALP", "INTRADAY", "SWING"):
@@ -295,34 +298,22 @@ async def api_full_target_walkforward(brain: str = "INTRADAY"):
     if result:
         return result
     archive = engine.historical_archive.state(brain)
-    return {
-        "status": "NOT_RUN", "brain": brain, "archive": archive,
-        "mode": "FULL_ARCHIVE_TARGET_WALKFORWARD", "auto_apply": False,
-        "weight_in_risk_engine": 0.0,
-    }
+    return {"status":"NOT_RUN","brain":brain,"archive":archive,"mode":"FULL_ARCHIVE_TARGET_WALKFORWARD","auto_apply":False,"weight_in_risk_engine":0.0}
 
 
 @app.post("/api/full-target-walkforward")
 async def api_run_full_target_walkforward(brain: str = "INTRADAY", max_points: int = 300):
-    brain = _normalize_brain(brain)
-    max_points = max(80, min(int(max_points), 600))
+    brain = _normalize_brain(brain); max_points = max(80, min(int(max_points), 600))
     if brain in full_target_running:
         return {"status": "RUNNING", "brain": brain, "cached": full_target_results.get(brain)}
-
     archive = engine.historical_archive.schedule(brain)
     if archive.get("status") not in ("READY", "PARTIAL"):
-        return {
-            "status": "ARCHIVE_LOADING", "brain": brain, "archive": archive,
-            "message": "Deep history is loading in the background. Run again after archive status becomes READY/PARTIAL.",
-            "auto_apply": False, "weight_in_risk_engine": 0.0,
-        }
-
+        return {"status":"ARCHIVE_LOADING","brain":brain,"archive":archive,"message":"Deep history is loading in the background. Run again after archive status becomes READY/PARTIAL.","auto_apply":False,"weight_in_risk_engine":0.0}
     full_target_running.add(brain)
     try:
         history = engine._history_for_analogs(brain)
         result = await asyncio.to_thread(run_full_target_walkforward, history, brain, max_points)
-        result["archive"] = engine.historical_archive.state(brain)
-        full_target_results[brain] = result
+        result["archive"] = engine.historical_archive.state(brain); full_target_results[brain] = result
         return result
     finally:
         full_target_running.discard(brain)
@@ -330,88 +321,64 @@ async def api_run_full_target_walkforward(brain: str = "INTRADAY", max_points: i
 
 @app.get("/api/historical-archive")
 async def api_historical_archive(brain: str | None = None):
-    if brain:
-        return engine.historical_archive.state(brain.upper())
-    return {
-        "current": engine.archive_state,
-        "brains": {name: engine.historical_archive.state(name) for name in ("SCALP", "INTRADAY", "SWING")},
-        "mode": "LAZY_SHADOW_ONLY", "weight_in_master": 0.0,
-    }
+    if brain: return engine.historical_archive.state(brain.upper())
+    return {"current":engine.archive_state,"brains":{name:engine.historical_archive.state(name) for name in ("SCALP","INTRADAY","SWING")},"mode":"LAZY_SHADOW_ONLY","weight_in_master":0.0}
 
 
 @app.get("/api/network")
 async def api_network(refresh: bool = False):
-    if refresh:
-        return await engine.network_source.refresh_if_due(force=True)
+    if refresh: return await engine.network_source.refresh_if_due(force=True)
     return engine.network
 
 
 @app.get("/api/derivatives")
 async def api_derivatives(refresh: bool = False):
-    if refresh:
-        return await engine.derivatives_source.refresh_if_due(force=True)
+    if refresh: return await engine.derivatives_source.refresh_if_due(force=True)
     return engine.derivatives
 
 
 @app.get("/api/learning")
-async def api_learning():
-    return db.learning_summary()
+async def api_learning(): return db.learning_summary()
 
 
 @app.get("/api/candles/{interval}")
 async def api_candles(interval: str, limit: int = 500):
-    if interval not in settings.intervals:
-        raise HTTPException(400, f"Unsupported interval: {interval}")
+    if interval not in settings.intervals: raise HTTPException(400, f"Unsupported interval: {interval}")
     return engine.market.get(interval, max(8, min(limit, 500)))
 
 
 @app.get("/api/trades")
-async def api_trades(limit: int = 50):
-    return db.recent_trades(max(1, min(limit, 200)))
+async def api_trades(limit: int = 50): return db.recent_trades(max(1, min(limit, 200)))
 
 
 @app.post("/api/backtest")
 async def api_backtest(days: int = 3):
     global last_execution_replay
-    if days not in (1, 3, 7, 14):
-        raise HTTPException(400, "days must be one of: 1, 3, 7, 14")
+    if days not in (1,3,7,14): raise HTTPException(400, "days must be one of: 1, 3, 7, 14")
     try:
-        result = await backtester.run(days)
-        result["validation_type"] = "SHORT_WINDOW_REPLAY"
-        last_execution_replay = result
-        return result
-    except RuntimeError as exc:
-        raise HTTPException(409, str(exc)) from exc
+        result = await backtester.run(days); result["validation_type"] = "SHORT_WINDOW_REPLAY"; last_execution_replay = result; return result
+    except RuntimeError as exc: raise HTTPException(409, str(exc)) from exc
 
 
 @app.post("/api/cycle-validation")
 async def api_cycle_validation(years: int = 6):
-    if years not in (3, 4, 5, 6, 7, 8, 9):
-        raise HTTPException(400, "years must be between 3 and 9")
-    try:
-        return await cycle_validator.run(years)
-    except RuntimeError as exc:
-        raise HTTPException(409, str(exc)) from exc
+    if years not in (3,4,5,6,7,8,9): raise HTTPException(400, "years must be between 3 and 9")
+    try: return await cycle_validator.run(years)
+    except RuntimeError as exc: raise HTTPException(409, str(exc)) from exc
 
 
 @app.post("/api/reset")
 async def api_reset():
     try:
-        result = engine.reset()
-        research_history.clear()
-        return result
-    except RuntimeError as exc:
-        raise HTTPException(409, str(exc)) from exc
+        result = engine.reset(); research_history.clear(); return result
+    except RuntimeError as exc: raise HTTPException(409, str(exc)) from exc
 
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await hub.connect(ws)
     try:
-        await ws.send_json({"type": "state", "state": engine.state()})
-        while True:
-            await ws.receive_text()
-    except WebSocketDisconnect:
-        await hub.disconnect(ws)
-    except Exception:
-        await hub.disconnect(ws)
+        await ws.send_json({"type":"state","state":engine.state()})
+        while True: await ws.receive_text()
+    except WebSocketDisconnect: await hub.disconnect(ws)
+    except Exception: await hub.disconnect(ws)
