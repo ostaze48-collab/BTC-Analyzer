@@ -99,6 +99,8 @@ async def health():
         "historical_analogs": True,
         "historical_analogs_mode": "SHADOW_ONLY",
         "analog_edge_validation": True,
+        "long_historical_memory": True,
+        "historical_archive_mode": "LAZY_SHADOW_ONLY",
         "feature_auto_promotion": False,
         "cycle_models": True,
         "readiness_gate": True,
@@ -167,6 +169,21 @@ async def api_analog_validation(limit: int = 5000):
 @app.get("/api/historical-analogs")
 async def api_historical_analogs():
     return engine.historical_analogs
+
+
+@app.get("/api/historical-archive")
+async def api_historical_archive(brain: str | None = None):
+    if brain:
+        return engine.historical_archive.state(brain.upper())
+    return {
+        "current": engine.archive_state,
+        "brains": {
+            name: engine.historical_archive.state(name)
+            for name in ("SCALP", "INTRADAY", "SWING")
+        },
+        "mode": "LAZY_SHADOW_ONLY",
+        "weight_in_master": 0.0,
+    }
 
 
 @app.get("/api/network")
