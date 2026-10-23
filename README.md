@@ -1,70 +1,75 @@
-# BTC AI Trader V1.25
+# BTC AI Trader V1.26
 
 منظومة بحث ومحاكاة **Paper Trading فقط** لتحليل BTCUSDT عبر ثلاثة عقول مترابطة: `SCALP` و`INTRADAY` و`SWING`، ثم اختيار صفقة واحدة بواسطة `MASTER`.
 
-> التداول الحقيقي معطّل. لا توجد في V1.25 أي حالة أو درجة تسمح تلقائيًا باستخدام أموال حقيقية أو تغيير الأهداف الفعلية.
+> التداول الحقيقي معطّل. V1.26 لا تمنح أي أهلية للتنفيذ الحقيقي حتى لو اجتازت كل مراحل البحث الحالية.
 
-## ما الجديد في V1.25؟
+## ما الجديد في V1.26؟
 
-V1.25 تضيف **Strict Paper Review Protocol** بعد V1.24 Unified Research Readiness. الهدف هو اكتشاف ما إذا كان أداء Paper يبدو مستقرًا الآن، أو أن آخر الصفقات بدأت تتدهور رغم أن المتوسط الطويل ما زال جيدًا.
+V1.26 تضيف **Extended Paper Observation** بعد V1.25 Strict Paper Review. الفكرة الأساسية: لا يكفي أن تنجح المنظومة في لقطة واحدة عند 100 صفقة؛ يجب أن يبقى الأداء مقبولًا بعد وصول صفقات جديدة فعلًا.
 
-### النوافذ التشخيصية
+### Persisted Checkpoints
 
-يتم فحص آخر:
+تُحفظ نتائج Strict Paper Review في SQLite وفق قواعد تمنع تصنيع دليل زائف من polling أو تحديث الصفحة:
 
-- `30` صفقة Paper: Mean R ≥ `0.05`، Profit Factor ≥ `1.10`، Max Drawdown ≤ `5R`، Net R > 0.
-- `60` صفقة Paper: Mean R ≥ `0.07`، Profit Factor ≥ `1.15`، Max Drawdown ≤ `7R`، Net R > 0.
-- `100` صفقة Paper: Mean R ≥ `0.08`، Profit Factor ≥ `1.20`، Max Drawdown ≤ `10R`، Net R > 0.
+- أول checkpoint لا يُسمح به قبل `100` صفقة Paper مؤهلة.
+- بعد ذلك لا يُحفظ checkpoint جديد إلا بعد `20` صفقة مؤهلة جديدة على الأقل.
+- تكرار الطلب عند نفس عدد الصفقات يعيد `NO_NEW_ELIGIBLE_TRADES`.
+- إذا تقدمت العينة بأقل من 20 صفقة يعيد `CHECKPOINT_GAP_NOT_REACHED`.
+- عدد الصفقات المؤهلة `eligible_samples` فريد داخل سجل checkpoints.
+- Reset للمحاكاة يمسح سجل checkpoints لأنه لم يعد يمثل نفس تجربة Paper.
 
-كل النتائج تُقاس بوحدة `R` باستخدام `realized_pnl / risk_budget` من الصفقات المغلقة.
+بهذا لا تستطيع الواجهة التي تعمل كل دقيقة أن تنشئ أربعة أدلة من نفس البيانات.
 
-**مهم:** نوافذ 30/60/100 متداخلة، لذلك هي **تشخيص للاستقرار والتدهور وليست عينات OOS مستقلة**. لا يجوز اعتبار نجاحها ثلاثة اختبارات مستقلة.
+## شروط Persistence Confirmation
 
-### Recent Decay Gate
+حتى يظهر:
 
-حتى لا يخفي التاريخ الطويل تدهورًا حديثًا، يجب أن يكون:
+`PERSISTENCE_CONFIRMED_PAPER_ONLY`
 
-- Mean R لآخر 30 صفقة موجبًا.
-- Mean R لآخر 100 صفقة موجبًا.
-- Mean R لآخر 30 صفقة لا يقل عن `50%` من Mean R لآخر 100 صفقة.
+يجب أن تجتمع الشروط التالية:
 
-إذا تدهورت آخر 30 صفقة بشدة، يمنع V1.25 المرور حتى لو كانت نافذة 100 صفقة ما زالت تبدو جيدة.
+1. وجود `4` checkpoints محفوظة على الأقل.
+2. أن يمتد أول وآخر checkpoint عبر `60` صفقة مؤهلة جديدة على الأقل.
+3. أن تكون المسافات بين checkpoints المحفوظة ≥ `20` صفقة جديدة.
+4. آخر `3` checkpoints يجب أن تكون `STRICT_PAPER_REVIEW_PASSED`.
+5. Strict Paper Review الحالية يجب أن تظل ناجحة الآن.
+6. Mean R لآخر 30 صفقة يجب أن يبقى موجبًا عبر آخر 3 checkpoints وألا يهبط في أحدث نقطة لأقل من 50% من متوسط هذه النقاط.
+7. Paper-only interlock يجب أن يبقى مقفولًا بالكامل.
 
-### شروط الدخول إلى Strict Paper Review
+إذا تحققت الشروط، المرحلة التالية ليست Live Trading بل:
 
-لا يكفي وجود 100 صفقة فقط. يجب أيضًا أن تكون V1.24 أعادت:
+`CONTINUE_LONG_HORIZON_PAPER_MONITORING`
 
-`STRICT_PAPER_REVIEW_CANDIDATE`
+## لماذا هذا ليس OOS مستقلًا؟
 
-مع:
+الـcheckpoints منفصلة بعدد صفقات جديدة، لكن نوافذ 30/60/100 داخل كل checkpoint ما زالت تتداخل جزئيًا. لذلك تصف V1.26 هذا الدليل باسم:
 
-- `strict_paper_review_allowed = true`
-- `paper_only = true`
-- `automatic_real_execution = false`
-- `real_execution_eligibility = false`
-- `live_execution_enabled = false`
+`TEMPORAL_PERSISTENCE_DIAGNOSTIC`
 
-أي إشارة تشغيل حقيقي تكسر `paper_only_interlock` وتمنع المرور.
+وليس Independent OOS.
 
-## نتيجة V1.25
+المنظومة تعرض التنبيه صراحة:
 
-إذا فشل أي Gate:
+> Checkpoint windows overlap. Persistence across later trade counts is useful stability evidence but is not independent OOS evidence.
 
-`STRICT_PAPER_REVIEW_BLOCKED`
+## V1.25 Strict Paper Review
 
-والمرحلة التالية:
+V1.25 تفحص آخر 30/60/100 صفقة بوحدة `R`:
 
-`CONTINUE_PAPER_COLLECTION`
+- 30 صفقة: Mean R ≥ `0.05`، PF ≥ `1.10`، Max DD ≤ `5R`.
+- 60 صفقة: Mean R ≥ `0.07`، PF ≥ `1.15`، Max DD ≤ `7R`.
+- 100 صفقة: Mean R ≥ `0.08`، PF ≥ `1.20`، Max DD ≤ `10R`.
 
-إذا نجحت جميع الـGates:
+وتضيف Recent Decay Gate حتى لا يخفي الأداء الطويل تدهور آخر 30 صفقة.
 
-`STRICT_PAPER_REVIEW_PASSED`
+## حالات V1.26
 
-والمرحلة التالية الوحيدة:
+- `PERSISTENCE_NOT_CONFIRMED`: Strict Paper الحالية غير ناجحة أو الأدلة الزمنية غير متوافقة.
+- `PERSISTENCE_BUILDING`: Strict Paper ناجحة لكن عدد checkpoints/الامتداد الزمني غير كافٍ بعد.
+- `PERSISTENCE_CONFIRMED_PAPER_ONLY`: ثبات Paper مؤكد وفق شروط V1.26 الحالية، مع بقاء كل التنفيذ الحقيقي معطّلًا.
 
-`EXTENDED_PAPER_OBSERVATION`
-
-حتى عند النجاح:
+دائمًا:
 
 - `paper_only = true`
 - `automatic_real_execution = false`
@@ -72,19 +77,6 @@ V1.25 تضيف **Strict Paper Review Protocol** بعد V1.24 Unified Research Re
 - `live_execution_enabled = false`
 - `target_auto_apply = false`
 - `guarantee = NONE`
-
-أي أن V1.25 لا تفتح التداول الحقيقي؛ بل تسمح فقط بمراقبة Paper أطول وأكثر صرامة.
-
-## Unified Research Readiness V1.24
-
-V1.24 تجمع الأدلة الرئيسية في حكم واحد:
-
-1. Core Readiness: Paper sample + genuine chronological OOS + PF/Avg R/Return + Drawdown + Brain×Regime robustness + Cycle holdout.
-2. Target Evidence: Full Historical Target Walk-Forward + Frozen-entry Live Shadow.
-3. Feature Research: Feature Edge Lab + Incremental Feature Walk-Forward كدليل داعم، وليس شرطًا يجبر النظام على overfitting.
-4. Execution Interlock: real execution يجب أن يبقى OFF.
-
-`Research Score` معلوماتي فقط ولا يمكنه تجاوز Hard Gate فاشل.
 
 ## طبقات الإثبات الحالية
 
@@ -100,43 +92,38 @@ V1.24 تجمع الأدلة الرئيسية في حكم واحد:
 10. Core Readiness Gate.
 11. Unified Research Readiness V1.24.
 12. Strict Paper Review Protocol V1.25.
+13. Extended Paper Observation V1.26.
 
-## السوق والفريمات
+## السوق وإدارة المخاطرة
 
-النظام يقرأ 18 فريمًا من `1m` حتى `1Y` مع طبقات Micro / Intraday / Swing / Macro. التحليل يعتمد الشموع المغلقة للقرارات، مع فصل واضح بين البيانات المتاحة وقت القرار والبيانات المستقبلية المستخدمة لاحقًا في التحقق.
-
-## إدارة المخاطرة
-
+- BTCUSDT.
+- 18 فريمًا من `1m` حتى `1Y`.
 - رأس المال التجريبي: `$1,000`.
-- صفقة واحدة فقط في أي لحظة.
-- LONG/SHORT وحجم المركز والرافعة Paper تُحدد تلقائيًا.
-- الرافعة الافتراضية القصوى: `5x`.
+- صفقة واحدة فقط.
+- الرافعة Paper بحد أقصى افتراضي `5x`.
 - مخاطرة Stop ديناميكية بحد أعلى افتراضي يقارب `1.4%`.
 - أهداف Risk Engine الحالية من `1R` حتى `5R`.
-- Soft Pause قبل حد الخسارة الكلي.
-- Hard model drawdown limit = `25%` من رأس المال الابتدائي.
-- Target Advisor / Feature research / Historical Analog layers لا تغيّر التنفيذ تلقائيًا.
+- Soft Pause + Hard model drawdown limit `25%`.
+- Historical/Feature/Target research لا يغير التنفيذ تلقائيًا.
 
 ## واجهة الهاتف
 
-واجهة Phone-First تعرض:
+V1.26 تضيف لوحة Extended Paper Observation تعرض:
 
-- MASTER والعقول الثلاثة.
-- كل الفريمات من الدقيقة إلى السنة.
-- الشارت والرسومات الفنية.
-- Risk / Leverage / Targets.
-- Cycle / Network / Derivatives.
-- Edge Lab + Incremental Walk-Forward.
-- Historical Memory + Analog Validation + Signature Cache.
-- Historical Target Advisor.
-- Full Historical Target Walk-Forward.
-- Frozen-entry Live Shadow Target.
-- Target Evidence Consensus Gate.
-- Unified Research Readiness.
-- Strict Paper Review مع نوافذ 30/60/100، Recent Decay، Brain/Regime concentration، وكل أسباب المنع.
+- Status.
+- عدد checkpoints الحالية والمطلوبة.
+- Trade span الحالي والمطلوب.
+- Last-4 pass rate.
+- Next stage.
+- Timeline لآخر checkpoints مع eligible samples و30-trade Mean R.
+- كل persistence gates وأسباب الفشل.
+- زر حفظ checkpoint يدوي.
+- محاولة checkpoint تلقائية دورية؛ backend هو الذي يقرر إن كانت 20 صفقة جديدة قد اكتملت.
 
 ## API
 
+- `GET /api/extended-paper-observation`
+- `POST /api/extended-paper-observation/checkpoint`
 - `GET /api/strict-paper-review`
 - `GET /api/unified-readiness`
 - `GET /api/target-evidence-gate`
@@ -149,17 +136,18 @@ V1.24 تجمع الأدلة الرئيسية في حكم واحد:
 GitHub Actions يفحص:
 
 - Python compile.
-- JavaScript syntax حتى `v35.js`.
-- Unit tests لـStrict Paper Review وUnified Readiness وTarget Evidence.
-- كشف recent degradation حتى إذا كان التاريخ الطويل جيدًا.
-- منع نقص العينة من المرور.
-- منع أي real-execution flag من تجاوز Paper interlock.
-- No-lookahead / STOP_FIRST / Frozen-entry logic.
+- JavaScript syntax حتى `v36.js`.
+- Unit tests للتخزين الدائم للـcheckpoints.
+- منع polling من تصنيع persistence evidence.
+- شرط 20 صفقة جديدة بين checkpoints.
+- شرط 4 checkpoints و60 صفقة span.
+- كسر التأكيد عند checkpoint حديث فاشل أو recent edge decay.
+- Strict Paper / Unified Readiness / Target Evidence / No-lookahead.
 - تشغيل التطبيق و`/health`.
-- مزامنة رقم النسخة والواجهة والقدرات.
+- بقاء real execution وtarget auto-apply معطلين.
 
 ## المبدأ
 
-`Market Data → Multi-Timeframe Analysis → 3 Brains → MASTER → Adaptive Risk → Historical Memory → OOS Target Validation → Live Shadow → Target Evidence Gate → Unified Research Readiness → Strict Paper Review → Extended Paper Observation`
+`Market Data → 3 Brains → MASTER → Adaptive Risk → Historical/OOS Evidence → Live Shadow → Unified Readiness → Strict Paper Review → Persisted Trade Checkpoints → Extended Paper Observation`
 
-الهدف ليس نسخة تدّعي الربح، بل منظومة تستطيع أن **تثبت أين لديها Edge، تكتشف تدهورها مبكرًا، وترفض الانتقال إلى مرحلة أخطر عندما يكون الدليل غير كافٍ**.
+الهدف هو أن لا تُكافأ المنظومة على نجاح لحظي؛ بل أن **تثبت أن سلوكها يبقى متماسكًا بعد وصول بيانات وصفقات جديدة، وأن تسجل الفشل كما تسجل النجاح**.
