@@ -23,6 +23,7 @@ from .readiness import readiness_report
 from .target_advisor import build_historical_target_advisor_from_summary
 from .target_evidence_gate import target_evidence_gate
 from .target_policy_validation import validate_target_policy
+from .unified_readiness import unified_research_readiness
 from .version import APP_LABEL, APP_NAME, APP_VERSION
 
 
@@ -117,6 +118,8 @@ async def health():
         "live_shadow_target_mode": "FROZEN_ENTRY_LIVE_SHADOW",
         "target_evidence_gate": True,
         "target_evidence_gate_mode": "RESEARCH_PROMOTION_ONLY",
+        "unified_research_readiness": True,
+        "unified_readiness_mode": "HARD_GATE_AGGREGATION",
         "target_policy_auto_apply": False,
         "long_historical_memory": True,
         "historical_archive_mode": "LAZY_SHADOW_ONLY",
@@ -223,6 +226,18 @@ async def api_target_evidence_gate(limit: int = 5000):
     trades = db.recent_trades(safe_limit)
     live = validate_live_shadow_target(samples, trades)
     return target_evidence_gate(full_target_results, live)
+
+
+@app.get("/api/unified-readiness")
+async def api_unified_readiness(limit: int = 5000):
+    safe_limit = max(1, min(limit, 20000))
+    samples = db.edge_samples(safe_limit)
+    trades = db.recent_trades(safe_limit)
+    edge = analyze_feature_edge(samples)
+    incremental = incremental_walkforward(samples, max_features=500)
+    live = validate_live_shadow_target(samples, trades)
+    target_gate = target_evidence_gate(full_target_results, live)
+    return unified_research_readiness(_readiness(), target_gate, edge, incremental)
 
 
 def _normalize_brain(brain: str) -> str:
