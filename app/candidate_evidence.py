@@ -74,6 +74,14 @@ class CandidateEvidenceMatrix:
         archive_key = tuple((b, (archives.get(b) or {}).get("status"), int((archives.get(b) or {}).get("bars_loaded", 0) or 0)) for b in BRAINS)
         return (str(regime.get("regime", "")), proposal_key, archive_key)
 
+    def should_refresh(self, proposals: list[dict[str, Any]], regime: dict[str, Any], archives: dict[str, dict[str, Any]], force: bool = False) -> bool:
+        if self._task and not self._task.done():
+            return False
+        key = self._key(proposals, regime, archives)
+        if force:
+            return True
+        return not (key == self._last_key and time.monotonic() - self._last_at < self.ttl_seconds)
+
     def schedule(
         self, proposals: list[dict[str, Any]], snapshots: dict[str, dict[str, Any]], layers: dict[str, Any],
         regime: dict[str, Any], histories: dict[str, dict[str, list[dict[str, Any]]]], archives: dict[str, dict[str, Any]],
