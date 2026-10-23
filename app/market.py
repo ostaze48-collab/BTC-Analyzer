@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 from collections import deque
+from datetime import datetime, timezone
 from typing import Awaitable, Callable
 
 import httpx
@@ -12,6 +13,44 @@ import websockets
 from .config import settings
 
 MarketCallback = Callable[[dict], Awaitable[None]]
+
+
+def _calendar_group(ts: int, interval: str) -> tuple[int, int, int]:
+    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+    if interval == "3M":
+        bucket = (dt.month - 1) // 3
+        return dt.year, bucket, (bucket + 1) * 3
+    if interval == "6M":
+        bucket = (dt.month - 1) // 6
+        return dt.year, bucket, (bucket + 1) * 6
+    return dt.year, 0, 12
+
+
+def aggregate_monthly(monthly: list[dict], interval: str) -> list[dict]:
+    """Aggregate native 1M candles into 3M, 6M and 1y UTC calendar candles."""
+    if interval not in ("3M", "6M", "1y"):
+        raise ValueError(f"Unsupported synthetic interval: {interval}")
+    groups: dict[tuple[int, int, int], list[dict]] = {}
+    for candle in monthly:
+        groups.setdefault(_calendar_group(int(candle["time"]), interval), []).append(candle)
+
+    out: list[dict] = []
+    for key in sorted(groups):
+        rows = sorted(groups[key], key=lambda x: x["time"])
+        year, _bucket, expected_last_month = key
+        last_dt = datetime.fromtimestamp(int(rows[-1]["time"]), tz=timezone.utc)
+        period_complete = last_dt.year == year and last_dt.month == expected_last_month and bool(rows[-1].get("closed"))
+        out.append({
+            "time": int(rows[0]["time"]),
+            "close_time": int(rows[-1].get("close_time", rows[-1]["time"])),
+            "open": float(rows[0]["open"]),
+            "high": max(float(x["high"]) for x in rows),
+            "low": min(float(x["low"]) for x in rows),
+            "close": float(rows[-1]["close"]),
+            "volume": sum(float(x["volume"]) for x in rows),
+            "closed": period_complete,
+        })
+    return out
 
 
 class MarketData:
@@ -47,20 +86,31 @@ class MarketData:
         if data and interval == "1m":
             self.last_price = float(data[-1][4])
 
+    def _rebuild_synthetic(self) -> None:
+        monthly = list(self.candles.get("1M", []))
+        if not monthly:
+            return
+        for interval in settings.synthetic_intervals:
+            rows = aggregate_monthly(monthly, interval)
+            self.candles[interval] = deque(rows[-settings.history_limit:], maxlen=settings.history_limit)
+
     async def load_history(self) -> str:
         last_error: Exception | None = None
         async with httpx.AsyncClient(follow_redirects=True) as client:
             for base in settings.rest_bases:
                 try:
-                    await asyncio.gather(*(self._load_interval(client, base, i) for i in settings.intervals))
+                    await asyncio.gather(*(self._load_interval(client, base, i) for i in settings.native_intervals))
+                    self._rebuild_synthetic()
                     return base
                 except Exception as exc:
                     last_error = exc
         raise RuntimeError(f"All history endpoints failed: {last_error}")
 
     def _history_ready(self) -> bool:
-        # 200 confirmed bars are enough for EMA200 and structure on every layer.
-        return all(sum(1 for c in self.candles[i] if c.get("closed")) >= 200 for i in settings.intervals)
+        return all(
+            sum(1 for c in self.candles[i] if c.get("closed")) >= settings.min_bars(i)
+            for i in settings.intervals
+        )
 
     async def _history_retry_loop(self) -> None:
         while not self._history_ready():
@@ -102,14 +152,14 @@ class MarketData:
                     pass
 
     async def run(self) -> None:
-        streams = "/".join(f"{settings.symbol.lower()}@kline_{interval}" for interval in settings.intervals)
+        streams = "/".join(f"{settings.symbol.lower()}@kline_{interval}" for interval in settings.native_intervals)
         endpoint_index = 0
         while True:
             base = settings.ws_bases[endpoint_index % len(settings.ws_bases)]
             endpoint_index += 1
             url = f"{base}/stream?streams={streams}"
             try:
-                async with websockets.connect(url, ping_interval=20, ping_timeout=20, close_timeout=5, max_size=4_000_000) as ws:
+                async with websockets.connect(url, ping_interval=20, ping_timeout=20, close_timeout=5, max_size=5_000_000) as ws:
                     self.connected = True
                     await self.callback({"type": "connection", "connected": True, "source": base})
                     async for raw in ws:
@@ -129,6 +179,13 @@ class MarketData:
                         self._upsert(interval, candle)
                         self.last_price = candle["close"]
                         await self.callback({"type": "market", "interval": interval, "candle": candle, "closed": candle["closed"]})
+
+                        if interval == "1M":
+                            self._rebuild_synthetic()
+                            for synthetic in settings.synthetic_intervals:
+                                if self.candles[synthetic]:
+                                    sc = self.candles[synthetic][-1]
+                                    await self.callback({"type": "market", "interval": synthetic, "candle": sc, "closed": sc["closed"], "synthetic": True})
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
