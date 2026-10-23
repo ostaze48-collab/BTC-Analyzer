@@ -8,16 +8,16 @@ class UiSyncTests(unittest.TestCase):
     def test_index_loads_all_current_version_layers(self):
         html = Path("app/static/index.html").read_text(encoding="utf-8")
         self.assertIn(APP_LABEL, html)
-        for script in ("v22.js", "v23.js", "v24.js", "v25.js", "v26.js", "v27.js", "v28.js", "v29.js", "v30.js"):
+        for script in ("v22.js", "v23.js", "v24.js", "v25.js", "v26.js", "v27.js", "v28.js", "v29.js", "v30.js", "v31.js"):
             self.assertIn(f'/static/{script}', html)
 
-    def test_latest_ui_reads_target_policy_validation(self):
-        v30 = Path("app/static/v30.js").read_text(encoding="utf-8")
-        self.assertIn("/api/version", v30)
-        self.assertIn("/api/target-policy-validation", v30)
-        self.assertIn("Target Policy Validation", v30)
-        self.assertEqual(APP_VERSION, "1.20.0")
-        self.assertEqual(APP_LABEL, "V1.20")
+    def test_latest_ui_reads_full_target_walkforward(self):
+        v31 = Path("app/static/v31.js").read_text(encoding="utf-8")
+        self.assertIn("/api/version", v31)
+        self.assertIn("/api/full-target-walkforward", v31)
+        self.assertIn("Full Historical Target Walk", v31)
+        self.assertEqual(APP_VERSION, "1.21.0")
+        self.assertEqual(APP_LABEL, "V1.21")
 
 
 if __name__ == "__main__":
