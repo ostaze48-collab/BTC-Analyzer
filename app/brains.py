@@ -33,7 +33,6 @@ def _weighted_vote(snapshots: dict[str, dict[str, Any]], weights: dict[str, floa
         value += float(snap.get("pattern_bias", 0.0)) * 0.18
         feature_bias = float((snap.get("feature_summary") or {}).get("bias", 0.0))
         feature_strength = float((snap.get("feature_summary") or {}).get("strength", 0.0))
-        # Hundreds of background features act only as a bounded secondary vote.
         value += feature_bias * min(0.22, 0.08 + 0.14 * feature_strength)
         value = max(-1.0, min(1.0, value))
         details[interval] = round(value, 3)
@@ -43,14 +42,19 @@ def _weighted_vote(snapshots: dict[str, dict[str, Any]], weights: dict[str, floa
     return (total / used if used else 0.0), details
 
 
-def macro_context(snapshots: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    # Calendar macro layer extends to one year. Long horizons guide/guard; they
-    # do not directly time entries.
+def macro_context(snapshots: dict[str, dict[str, Any]], cycle: dict[str, Any] | None = None) -> dict[str, Any]:
     weights = {
         "1d": 0.20, "3d": 0.15, "1w": 0.18,
         "1M": 0.18, "3M": 0.12, "6M": 0.09, "1y": 0.08,
     }
-    bias, votes = _weighted_vote(snapshots, weights)
+    technical_bias, votes = _weighted_vote(snapshots, weights)
+    cycle = cycle or {}
+    cycle_bias = float(cycle.get("bias", 0.0) or 0.0)
+    cycle_strength = float(cycle.get("strength", 0.0) or 0.0)
+    # Valuation/cycle models get only a small bounded macro weight; they never
+    # time entries by themselves.
+    cycle_weight = min(0.14, 0.06 + 0.08 * cycle_strength) if cycle.get("available") else 0.0
+    bias = technical_bias * (1.0 - cycle_weight) + cycle_bias * cycle_weight
     if bias > 0.16:
         direction = "BULLISH"
     elif bias < -0.16:
@@ -60,13 +64,16 @@ def macro_context(snapshots: dict[str, dict[str, Any]]) -> dict[str, Any]:
     return {
         "direction": direction,
         "bias": round(bias, 4),
+        "technical_bias": round(technical_bias, 4),
+        "cycle_bias": round(cycle_bias, 4),
+        "cycle_weight": round(cycle_weight, 4),
         "strength": round(abs(bias), 4),
         "votes": votes,
         "horizon": "1d→1y",
     }
 
 
-def layer_context(snapshots: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def layer_context(snapshots: dict[str, dict[str, Any]], cycle: dict[str, Any] | None = None) -> dict[str, Any]:
     layers = {
         "MICRO": {"1m": 0.35, "3m": 0.35, "5m": 0.30},
         "INTRADAY": {"15m": 0.25, "30m": 0.25, "1h": 0.30, "2h": 0.20},
@@ -77,7 +84,7 @@ def layer_context(snapshots: dict[str, dict[str, Any]]) -> dict[str, Any]:
         bias, votes = _weighted_vote(snapshots, weights)
         direction = "BULLISH" if bias > 0.14 else ("BEARISH" if bias < -0.14 else "NEUTRAL")
         out[name] = {"direction": direction, "bias": round(bias, 4), "votes": votes}
-    out["MACRO"] = macro_context(snapshots)
+    out["MACRO"] = macro_context(snapshots, cycle)
     return out
 
 
@@ -127,6 +134,7 @@ def _proposal(profile: BrainProfile, snapshots: dict[str, dict[str, Any]], macro
         "bias": round(bias, 4), "anchor": profile.anchor, "votes": details,
         "macro_direction": macro_dir, "macro_bias": macro["bias"], "macro_strength": macro["strength"],
         "macro_conflict": macro_conflict, "macro_aligned": macro_aligned,
+        "cycle_bias": macro.get("cycle_bias", 0.0), "cycle_weight": macro.get("cycle_weight", 0.0),
         "pattern_bias": round(anchor_pattern_bias, 4), "pattern_aligned": pattern_aligned, "pattern_conflict": pattern_conflict,
         "feature_bias": round(anchor_feature_bias, 4), "feature_count": int(feature_summary.get("count", 0)),
         "feature_aligned": feature_aligned, "feature_conflict": feature_conflict,
@@ -177,8 +185,8 @@ def _proposal(profile: BrainProfile, snapshots: dict[str, dict[str, Any]], macro
     return common
 
 
-def analyze_brains(snapshots: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
-    macro = macro_context(snapshots)
+def analyze_brains(snapshots: dict[str, dict[str, Any]], cycle: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    macro = macro_context(snapshots, cycle)
     proposals = [_proposal(profile, snapshots, macro) for profile in PROFILES]
     directional = [p for p in proposals if p.get("direction") in ("LONG", "SHORT")]
     for p in proposals:
