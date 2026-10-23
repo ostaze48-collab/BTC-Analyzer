@@ -4,13 +4,17 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="theme-color" content="#0b0e14" />
-  <title>BTC AI Trader V1</title>
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>BTC AI Trader V1.1</title>
   <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/backtest.css" />
 </head>
 <body>
   <header class="app-header">
     <div class="brand">
-      <h1>BTC AI TRADER <span>V1</span></h1>
+      <h1>BTC AI TRADER <span>V1.1</span></h1>
       <p>3 عقول مترابطة · MASTER · صفقة واحدة</p>
     </div>
     <div class="pricebox">
@@ -46,20 +50,11 @@
       </article>
     </section>
 
-    <section id="brainsSection" class="card brain-card section-brains">
-      <div class="section-title-row">
-        <div class="card-title">العقول الثلاثة</div>
-        <small class="mobile-hint">اسحب للمقارنة ←</small>
-      </div>
-      <div id="brains" class="brains"></div>
-    </section>
-
     <section id="activeSection" class="bottom-grid section-active">
       <article class="card active-card">
         <div class="card-title">الصفقة النشطة</div>
         <div id="activeTrade" class="empty">لا توجد صفقة مفتوحة.</div>
       </article>
-
       <article class="card performance-card">
         <div class="card-title">أداء النظام</div>
         <div class="metric-row"><span>Trades</span><b id="trades">0</b></div>
@@ -69,44 +64,60 @@
       </article>
     </section>
 
+    <section id="brainsSection" class="card brain-card section-brains">
+      <div class="section-title-row">
+        <div class="card-title">العقول الثلاثة</div>
+        <small class="mobile-hint">اسحب للمقارنة ←</small>
+      </div>
+      <div id="brains" class="brains"></div>
+    </section>
+
     <section id="chartSection" class="card chart-card section-chart">
       <div class="chart-head">
         <div class="card-title">الشارت الحي</div>
         <div id="tfButtons" class="tf-buttons" aria-label="Timeframes">
-          <button data-tf="1m">1m</button>
-          <button class="active" data-tf="5m">5m</button>
-          <button data-tf="15m">15m</button>
-          <button data-tf="1h">1H</button>
-          <button data-tf="4h">4H</button>
+          <button data-tf="1m">1m</button><button class="active" data-tf="5m">5m</button>
+          <button data-tf="15m">15m</button><button data-tf="1h">1H</button><button data-tf="4h">4H</button>
         </div>
       </div>
       <div id="chart"></div>
       <div class="attribution">Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView Lightweight Charts™</a></div>
     </section>
 
+    <section id="backtestSection" class="card backtest-card section-backtest">
+      <div class="backtest-head">
+        <div>
+          <div class="card-title">Replay / Backtesting</div>
+          <div class="muted">اختبر نفس العقول الثلاثة والـMaster على بيانات BTC التاريخية.</div>
+        </div>
+        <div class="backtest-controls">
+          <select id="backtestDays" aria-label="مدة الاختبار"><option value="1">1 يوم</option><option value="3" selected>3 أيام</option><option value="7">7 أيام</option><option value="14">14 يوم</option></select>
+          <button id="runBacktest" class="primary">▶ تشغيل</button>
+        </div>
+      </div>
+      <div id="backtestStatus" class="muted backtest-status">جاهز للاختبار.</div>
+      <div id="backtestResults"></div>
+    </section>
+
     <section id="tradesSection" class="card section-trades">
       <div class="card-title">آخر الصفقات</div>
       <div class="table-wrap">
-        <table>
-          <thead><tr><th>#</th><th>العقل</th><th>الاتجاه</th><th>الدخول</th><th>الخروج</th><th>P/L</th><th>السبب</th></tr></thead>
-          <tbody id="tradesBody"></tbody>
-        </table>
+        <table><thead><tr><th>#</th><th>العقل</th><th>الاتجاه</th><th>الدخول</th><th>الخروج</th><th>P/L</th><th>السبب</th></tr></thead><tbody id="tradesBody"></tbody></table>
       </div>
     </section>
 
-    <div class="notice">
-      V1 للمحاكاة والبحث فقط · لا توجد أوامر تداول حقيقية
-    </div>
+    <div class="notice">V1.1 للمحاكاة والبحث فقط · لا توجد أوامر تداول حقيقية</div>
   </main>
 
   <nav class="mobile-nav" aria-label="التنقل السريع">
     <a href="#overview"><span>⌂</span><small>الرئيسية</small></a>
     <a href="#brainsSection"><span>◉</span><small>العقول</small></a>
     <a href="#chartSection"><span>⌁</span><small>الشارت</small></a>
-    <a href="#activeSection"><span>↗</span><small>الصفقة</small></a>
+    <a href="#backtestSection"><span>▶</span><small>الاختبار</small></a>
   </nav>
 
   <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5.2.1/dist/lightweight-charts.standalone.production.js"></script>
   <script src="/static/app.js"></script>
+  <script src="/static/backtest.js"></script>
 </body>
 </html>
