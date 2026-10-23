@@ -13,7 +13,12 @@ from .config import settings
 from .indicators import snapshot
 from .master import select_trade
 
-INTERVAL_MS = {"1m": 60_000, "5m": 300_000, "15m": 900_000, "1h": 3_600_000, "4h": 14_400_000}
+INTERVAL_MS = {
+    "1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000, "30m": 1_800_000,
+    "1h": 3_600_000, "2h": 7_200_000, "4h": 14_400_000, "6h": 21_600_000,
+    "8h": 28_800_000, "12h": 43_200_000, "1d": 86_400_000,
+    "3d": 259_200_000, "1w": 604_800_000,
+}
 
 
 class BacktestEngine:
@@ -35,10 +40,8 @@ class BacktestEngine:
             return await asyncio.to_thread(self._simulate, data, start_ms, end_ms, days)
 
     async def _load_all(self, start_ms: int, end_ms: int) -> dict[str, list[dict[str, Any]]]:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=20) as client:
-            results = await asyncio.gather(*[
-                self._fetch_interval(client, tf, start_ms, end_ms) for tf in settings.intervals
-            ])
+        async with httpx.AsyncClient(follow_redirects=True, timeout=25) as client:
+            results = await asyncio.gather(*[self._fetch_interval(client, tf, start_ms, end_ms) for tf in settings.intervals])
         return dict(zip(settings.intervals, results))
 
     async def _fetch_interval(self, client: httpx.AsyncClient, interval: str, start_ms: int, end_ms: int):
@@ -98,6 +101,7 @@ class BacktestEngine:
             "quantity": qty, "remaining_qty": qty, "realized_pnl": 0.0,
             "tp1_hit": False, "tp2_hit": False, "opened_at": ts,
             "initial_risk_price": risk, "mfe_pct": 0.0, "mae_pct": 0.0,
+            "macro_direction": p.get("macro_direction"), "macro_conflict": p.get("macro_conflict", False),
         }
 
     def _partial(self, t: dict[str, Any], fraction: float, price: float, flag: str):
@@ -126,6 +130,7 @@ class BacktestEngine:
         if t["direction"] == "LONG":
             t["mfe_pct"] = max(t["mfe_pct"], (c["high"] - e) / e * 100)
             t["mae_pct"] = max(t["mae_pct"], (e - c["low"]) / e * 100)
+            # Conservative ambiguity policy: stop is processed before targets.
             if c["low"] <= t["stop_loss"]:
                 return self._close(t, t["stop_loss"], "STOP_LOSS", c["close_time"])
             if not t["tp1_hit"] and c["high"] >= t["tp1"]:
@@ -152,6 +157,7 @@ class BacktestEngine:
         timeline = [c for c in data["1m"] if start_s <= c["close_time"] <= end_s]
         if not timeline:
             raise RuntimeError("No historical 1m candles were returned")
+
         histories = {tf: deque(maxlen=settings.history_limit) for tf in settings.intervals}
         pointers = {tf: 0 for tf in settings.intervals}
         cached_snapshots: dict[str, dict[str, Any]] = {tf: {} for tf in settings.intervals}
@@ -181,8 +187,6 @@ class BacktestEngine:
                     peak = max(peak, capital)
                     max_dd = max(max_dd, (peak - capital) / peak * 100 if peak else 0)
 
-            # Higher-timeframe snapshots are expensive and do not change every
-            # minute. Recompute only when a fresh candle becomes available.
             for tf in settings.intervals:
                 if tf in changed or not cached_snapshots[tf]:
                     cached_snapshots[tf] = snapshot(list(histories[tf]))
@@ -237,15 +241,17 @@ class BacktestEngine:
                 "avg_mae_pct": round(fmean([t["mae_pct"] for t in sub]), 3) if sub else 0.0,
                 "selected": selected[brain],
             }
+
         return {
-            "symbol": settings.symbol,
-            "days": days,
-            "assumptions": {"paper_only": True, "one_trade_only": True, "same_candle_rule": "STOP_FIRST_CONSERVATIVE"},
+            "symbol": settings.symbol, "days": days,
+            "assumptions": {
+                "paper_only": True, "one_trade_only": True,
+                "same_candle_rule": "STOP_FIRST_CONSERVATIVE",
+                "confirmed_candles_only": True, "intervals": list(settings.intervals),
+            },
             "metrics": {
-                "starting_capital": round(settings.paper_start_capital, 2),
-                "ending_capital": round(capital, 2),
-                "net_pnl": round(capital-settings.paper_start_capital, 2),
-                "return_pct": round((capital/settings.paper_start_capital-1)*100, 2),
+                "starting_capital": round(settings.paper_start_capital, 2), "ending_capital": round(capital, 2),
+                "net_pnl": round(capital-settings.paper_start_capital, 2), "return_pct": round((capital/settings.paper_start_capital-1)*100, 2),
                 "trades": len(trades), "wins": wins, "losses": len(trades)-wins,
                 "win_rate": round(wins/len(trades)*100, 2) if trades else 0.0,
                 "profit_factor": round(gw/gl, 3) if gl else (999.0 if gw else 0.0),
@@ -254,13 +260,10 @@ class BacktestEngine:
             },
             "by_brain": by_brain,
             "recent_trades": [
-                {
-                    "brain": t["brain"], "direction": t["direction"],
-                    "entry": round(t["entry"],2), "exit": round(t["exit_price"],2),
-                    "pnl": round(t["realized_pnl"],2), "r": round(t["r_multiple"],3),
-                    "reason": t["exit_reason"], "mfe_pct": round(t["mfe_pct"],3),
-                    "mae_pct": round(t["mae_pct"],3),
-                }
+                {"brain": t["brain"], "direction": t["direction"], "entry": round(t["entry"],2), "exit": round(t["exit_price"],2),
+                 "pnl": round(t["realized_pnl"],2), "r": round(t["r_multiple"],3), "reason": t["exit_reason"],
+                 "mfe_pct": round(t["mfe_pct"],3), "mae_pct": round(t["mae_pct"],3),
+                 "macro_direction": t.get("macro_direction"), "macro_conflict": t.get("macro_conflict", False)}
                 for t in trades[-100:]
             ],
         }
