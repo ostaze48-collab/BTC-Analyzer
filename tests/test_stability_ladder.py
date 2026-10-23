@@ -40,7 +40,9 @@ class StabilityLadderTests(unittest.TestCase):
         self.assertFalse(r["levels"][1]["passed"])
 
     def test_seven_day_distributed_activity_can_reach_level3(self):
-        rows = snapshots(hours=168, step_hours=3, trades_per_step=2)
+        # 3 trades per 3h gives 24 new trades inside the final 24h, so the
+        # canonical V1.27 gate genuinely passes before longer levels are tested.
+        rows = snapshots(hours=168, step_hours=3, trades_per_step=3)
         r = stability_ladder({"snapshots": rows})
         self.assertEqual(r["highest_level"], 3)
         self.assertEqual(r["status"], "STABILITY_7D_CONFIRMED")
@@ -70,7 +72,7 @@ class StabilityLadderTests(unittest.TestCase):
         self.assertIn("active_trade_days", r["levels"][2]["failed_gates"])
 
     def test_levels_are_sequential(self):
-        rows = snapshots(hours=168, step_hours=3, trades_per_step=2)
+        rows = snapshots(hours=168, step_hours=3, trades_per_step=3)
         # Break the last 24h strict evidence so L1 fails; longer historical data must not skip it.
         for row in rows[-9:]:
             row["strict_pass"] = False
