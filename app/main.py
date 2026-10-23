@@ -21,6 +21,7 @@ from .incremental_edge import incremental_walkforward
 from .live_shadow_target import validate_live_shadow_target
 from .readiness import readiness_report
 from .target_advisor import build_historical_target_advisor_from_summary
+from .target_evidence_gate import target_evidence_gate
 from .target_policy_validation import validate_target_policy
 from .version import APP_LABEL, APP_NAME, APP_VERSION
 
@@ -114,6 +115,8 @@ async def health():
         "full_target_walkforward_mode": "FULL_ARCHIVE_TARGET_WALKFORWARD",
         "live_shadow_target": True,
         "live_shadow_target_mode": "FROZEN_ENTRY_LIVE_SHADOW",
+        "target_evidence_gate": True,
+        "target_evidence_gate_mode": "RESEARCH_PROMOTION_ONLY",
         "target_policy_auto_apply": False,
         "long_historical_memory": True,
         "historical_archive_mode": "LAZY_SHADOW_ONLY",
@@ -211,6 +214,15 @@ async def api_live_shadow_target(limit: int = 5000):
     samples = db.edge_samples(safe_limit)
     trades = db.recent_trades(safe_limit)
     return validate_live_shadow_target(samples, trades)
+
+
+@app.get("/api/target-evidence-gate")
+async def api_target_evidence_gate(limit: int = 5000):
+    safe_limit = max(1, min(limit, 20000))
+    samples = db.edge_samples(safe_limit)
+    trades = db.recent_trades(safe_limit)
+    live = validate_live_shadow_target(samples, trades)
+    return target_evidence_gate(full_target_results, live)
 
 
 def _normalize_brain(brain: str) -> str:
