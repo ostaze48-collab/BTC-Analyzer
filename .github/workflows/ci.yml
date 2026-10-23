@@ -2,7 +2,7 @@ name: BTC AI Trader CI
 
 on:
   push:
-    branches: [main, v1.16-deep-evidence]
+    branches: [main, v1.16-deep-evidence, v1.16-analog-edge-validation-clean]
   pull_request:
     branches: [main]
 
