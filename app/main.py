@@ -19,6 +19,7 @@ from .engine import TradingEngine
 from .incremental_edge import incremental_walkforward
 from .readiness import readiness_report
 from .target_advisor import build_historical_target_advisor_from_summary
+from .target_policy_validation import validate_target_policy
 from .version import APP_LABEL, APP_NAME, APP_VERSION
 
 
@@ -103,6 +104,9 @@ async def health():
         "historical_target_advisor": True,
         "historical_target_advisor_mode": "SHADOW_ONLY",
         "historical_target_range_r": [1, 5],
+        "target_policy_validation": True,
+        "target_policy_validation_mode": "JOURNAL_PATH_PARTIAL_VALIDATION",
+        "target_policy_auto_apply": False,
         "long_historical_memory": True,
         "historical_archive_mode": "LAZY_SHADOW_ONLY",
         "historical_signature_cache": True,
@@ -182,6 +186,14 @@ async def api_historical_analogs():
 @app.get("/api/historical-target-advisor")
 async def api_historical_target_advisor():
     return build_historical_target_advisor_from_summary(engine.historical_analogs)
+
+
+@app.get("/api/target-policy-validation")
+async def api_target_policy_validation(limit: int = 5000):
+    safe_limit = max(1, min(limit, 20000))
+    samples = db.edge_samples(safe_limit)
+    trades = db.recent_trades(safe_limit)
+    return validate_target_policy(samples, trades)
 
 
 @app.get("/api/historical-archive")
