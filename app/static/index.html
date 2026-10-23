@@ -7,14 +7,14 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>BTC AI Trader V1.1</title>
+  <title>BTC AI Trader V1.2</title>
   <link rel="stylesheet" href="/static/styles.css" />
   <link rel="stylesheet" href="/static/backtest.css" />
 </head>
 <body>
   <header class="app-header">
     <div class="brand">
-      <h1>BTC AI TRADER <span>V1.1</span></h1>
+      <h1>BTC AI TRADER <span>V1.2</span></h1>
       <p>3 عقول مترابطة · MASTER · صفقة واحدة</p>
     </div>
     <div class="pricebox">
@@ -31,6 +31,7 @@
         <div id="masterAction" class="decision wait">BOOTING</div>
         <div id="masterMessage" class="muted">تحميل البيانات...</div>
         <div id="winner"></div>
+        <div id="masterExplain" class="master-explain"></div>
       </article>
 
       <article class="card capital-card">
@@ -72,15 +73,32 @@
       <div id="brains" class="brains"></div>
     </section>
 
+    <section id="marketContextSection" class="card context-card section-context">
+      <div class="section-title-row">
+        <div class="card-title">السوق عبر الفريمات</div>
+        <small class="muted">اتجاه · هيكل · RSI · تقلب</small>
+      </div>
+      <div id="marketContext" class="market-context"></div>
+    </section>
+
     <section id="chartSection" class="card chart-card section-chart">
       <div class="chart-head">
-        <div class="card-title">الشارت الحي</div>
+        <div class="card-title">الشارت الذكي</div>
         <div id="tfButtons" class="tf-buttons" aria-label="Timeframes">
           <button data-tf="1m">1m</button><button class="active" data-tf="5m">5m</button>
           <button data-tf="15m">15m</button><button data-tf="1h">1H</button><button data-tf="4h">4H</button>
         </div>
       </div>
+      <div class="chart-controls" aria-label="Chart overlays">
+        <button class="overlay-toggle active" data-overlay="ema">EMA 20/50/200</button>
+        <button class="overlay-toggle" data-overlay="vwap">VWAP</button>
+        <button class="overlay-toggle active" data-overlay="sr">دعم / مقاومة</button>
+        <button class="overlay-toggle active" data-overlay="trade">Entry / SL / TP</button>
+      </div>
       <div id="chart"></div>
+      <div class="chart-legend">
+        <span class="legend ema20">EMA20</span><span class="legend ema50">EMA50</span><span class="legend ema200">EMA200</span><span class="legend vwap">VWAP</span>
+      </div>
       <div class="attribution">Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView Lightweight Charts™</a></div>
     </section>
 
@@ -106,7 +124,7 @@
       </div>
     </section>
 
-    <div class="notice">V1.1 للمحاكاة والبحث فقط · لا توجد أوامر تداول حقيقية</div>
+    <div class="notice">V1.2 للمحاكاة والبحث فقط · لا توجد أوامر تداول حقيقية</div>
   </main>
 
   <nav class="mobile-nav" aria-label="التنقل السريع">
