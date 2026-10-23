@@ -10,6 +10,7 @@ from .config import settings
 from .cycle_models import cycle_model_context
 from .db import Database
 from .derivatives_intelligence import DerivativesIntelligence
+from .historical_analogs import HistoricalAnalogEngine
 from .market import MarketData
 from .master import select_trade
 from .network_intelligence import NetworkIntelligence
@@ -29,6 +30,8 @@ class TradingEngine:
         self.network: dict[str, Any] = self.network_source.state
         self.derivatives_source = DerivativesIntelligence(ttl_seconds=60)
         self.derivatives: dict[str, Any] = self.derivatives_source.state
+        self.analog_source = HistoricalAnalogEngine(ttl_seconds=300)
+        self.historical_analogs: dict[str, Any] = self.analog_source.state
         self.snapshots: dict[str, dict[str, Any]] = {}
         self.layers: dict[str, Any] = {}
         self.cycle: dict[str, Any] = {"available": False, "models": {}, "bias": 0.0, "strength": 0.0}
@@ -51,11 +54,20 @@ class TradingEngine:
             for interval in self.market.candles
         }
 
+    def _history_for_analogs(self) -> dict[str, list[dict[str, Any]]]:
+        return {
+            interval: self.market.get_closed(interval, limit=1800 if interval == "1d" else 500)
+            for interval in self.market.candles
+        }
+
     def _features(self, advisory: dict[str, Any] | None = None) -> dict[str, Any]:
-        return feature_vector(
+        payload = feature_vector(
             self.snapshots, self.layers, advisory or self.master, self.regime,
             self.cycle, self.network, self.derivatives,
         )
+        payload["historical_analogs"] = self.historical_analogs
+        payload["schema"] = "learning_vector_v5"
+        return payload
 
     def _public_snapshots(self) -> dict[str, dict[str, Any]]:
         return {
@@ -75,6 +87,13 @@ class TradingEngine:
         }
         self.db.record_feature(int(closed_trade["id"]), "EXIT", features)
         self.learning_cache = self.db.learning_summary()
+
+    async def _refresh_analogs(self, advisory: dict[str, Any], force: bool = False) -> None:
+        self.historical_analogs = await self.analog_source.refresh(
+            advisory.get("winner"), self.snapshots, self.layers, self.regime,
+            self._history_for_analogs(), force=force,
+        )
+        advisory["historical_analogs"] = self.historical_analogs
 
     async def analyze(self, force: bool = False) -> None:
         if self._analysis_lock.locked() and not force:
@@ -120,6 +139,11 @@ class TradingEngine:
                     advisory["derivatives_intelligence"] = self.derivatives
                     active = None
 
+            # Historical analogs are a shadow evidence layer. They are computed
+            # from prior chart bars only and receive zero MASTER weight until a
+            # separate incremental out-of-sample validation proves added value.
+            await self._refresh_analogs(advisory, force=force)
+
             if not active and advisory["action"] in ("LONG", "SHORT") and advisory["winner"]:
                 context = {"regime": self.regime, "feature_vector": self._features(advisory)}
                 opened = self.trade_manager.open_from_proposal(advisory["winner"], context=context)
@@ -156,7 +180,8 @@ class TradingEngine:
             "last_analysis_at": self.last_analysis_at, "snapshots": self._public_snapshots(),
             "timeframe_layers": self.layers, "market_regime": self.regime,
             "cycle_models": self.cycle, "network_intelligence": self.network,
-            "derivatives_intelligence": self.derivatives, "master": self.master,
+            "derivatives_intelligence": self.derivatives, "historical_analogs": self.historical_analogs,
+            "master": self.master,
             "active_trade": self.trade_manager.state(price), "stats": stats,
             "learning": self.learning_cache,
             "risk_engine": {
@@ -180,7 +205,8 @@ class TradingEngine:
                 "one_trade_only": True, "paper_only": True, "analysis_uses_closed_candles": True,
                 "intervals": list(self.market.candles.keys()), "pattern_engine": True, "learning_journal": True,
                 "cycle_models": True, "network_intelligence": "SHADOW_ONLY",
-                "derivatives_intelligence": "SHADOW_ONLY", "analysis_horizon": "1m→1y",
+                "derivatives_intelligence": "SHADOW_ONLY", "historical_analogs": "SHADOW_ONLY",
+                "analysis_horizon": "1m→1y",
             },
         }
 
