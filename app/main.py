@@ -64,7 +64,7 @@ async def lifespan(app: FastAPI):
     await engine.stop()
 
 
-app = FastAPI(title="BTC AI Trader V1.10", version="1.10.0", lifespan=lifespan)
+app = FastAPI(title="BTC AI Trader V1.11", version="1.11.0", lifespan=lifespan)
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -78,7 +78,7 @@ async def home():
 async def health():
     return {
         "ok": True,
-        "service": "BTC AI Trader V1.10",
+        "service": "BTC AI Trader V1.11",
         "market_connected": bool(engine and engine.market.connected),
         "backtest_running": backtester.running,
         "cycle_validation_running": cycle_validator.running,
@@ -91,6 +91,8 @@ async def health():
         "cycle_models": True,
         "readiness_gate": True,
         "network_intelligence": "SHADOW_ONLY",
+        "derivatives_intelligence": "SHADOW_ONLY",
+        "long_daily_history": True,
     }
 
 
@@ -123,6 +125,13 @@ async def api_network(refresh: bool = False):
     if refresh:
         return await engine.network_source.refresh_if_due(force=True)
     return engine.network
+
+
+@app.get("/api/derivatives")
+async def api_derivatives(refresh: bool = False):
+    if refresh:
+        return await engine.derivatives_source.refresh_if_due(force=True)
+    return engine.derivatives
 
 
 @app.get("/api/learning")
