@@ -80,7 +80,7 @@ def confirmed_pivots(
     the live signal and replay engine from treating an unfinished swing as known.
     """
     n = len(candles)
-    if n < left + right + 3:
+    if n < left + right + 1:
         return []
     start = max(left, n - lookback)
     end = n - right
@@ -134,9 +134,6 @@ def market_structure(candles: list[dict[str, float]]) -> dict[str, Any]:
     latest_high = highs[-1] if highs else None
     latest_low = lows[-1] if lows else None
 
-    # Recent structure events are searched only against the latest three
-    # confirmed highs/lows. This keeps Replay fast while still following the
-    # levels that matter to the current structure.
     candidates = sorted(highs[-3:] + lows[-3:], key=lambda x: x["index"])
     events: list[dict[str, Any]] = []
     for p in candidates:
@@ -188,8 +185,6 @@ def active_fvgs(candles: list[dict[str, float]], lookback: int = 120, limit: int
         return []
     start = max(2, n - lookback)
 
-    # Suffix extremes let us check whether a gap was fully filled without a
-    # nested scan for every candidate.
     suffix_min_low = [float("inf")] * (n + 1)
     suffix_max_high = [float("-inf")] * (n + 1)
     for i in range(n - 1, -1, -1):
@@ -369,7 +364,6 @@ def vote(s: dict[str, Any]) -> float:
     elif ob.get("kind") == "BEARISH":
         score -= 0.25
 
-    # Nearby active FVGs are context only; they never dominate the signal.
     for zone in (s.get("fvg_zones") or [])[:2]:
         if float(zone.get("distance_pct", 99)) > 1.5:
             continue
