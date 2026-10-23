@@ -64,7 +64,7 @@ async def lifespan(app: FastAPI):
     await engine.stop()
 
 
-app = FastAPI(title="BTC AI Trader V1.9", version="1.9.0", lifespan=lifespan)
+app = FastAPI(title="BTC AI Trader V1.10", version="1.10.0", lifespan=lifespan)
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -78,7 +78,7 @@ async def home():
 async def health():
     return {
         "ok": True,
-        "service": "BTC AI Trader V1.9",
+        "service": "BTC AI Trader V1.10",
         "market_connected": bool(engine and engine.market.connected),
         "backtest_running": backtester.running,
         "cycle_validation_running": cycle_validator.running,
@@ -90,6 +90,7 @@ async def health():
         "feature_factory": True,
         "cycle_models": True,
         "readiness_gate": True,
+        "network_intelligence": "SHADOW_ONLY",
     }
 
 
@@ -102,7 +103,6 @@ async def api_state():
 
 def _readiness() -> dict[str, Any]:
     cycle_primary = (cycle_validator.last_result or {}).get("primary") or {}
-    # Short-window replay is intentionally NOT promoted as OOS evidence.
     exec_evidence: dict[str, Any] = {}
     if last_execution_replay:
         metrics = dict(last_execution_replay.get("metrics") or {})
@@ -116,6 +116,13 @@ async def api_readiness():
     report["cycle_validation"] = cycle_validator.last_result
     report["latest_execution_replay"] = last_execution_replay
     return report
+
+
+@app.get("/api/network")
+async def api_network(refresh: bool = False):
+    if refresh:
+        return await engine.network_source.refresh_if_due(force=True)
+    return engine.network
 
 
 @app.get("/api/learning")
