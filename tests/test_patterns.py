@@ -26,7 +26,10 @@ class PatternTests(unittest.TestCase):
             {"type": "HIGH", "price": 110.2, "time": 6, "index": 5},
             {"type": "LOW", "price": 102, "time": 7, "index": 6},
         ]
-        forming = [c(i, 104, 106, 103, 104) for i in range(1, 10)]
+        # Classical patterns require enough confirmed history before they are
+        # considered; use 11 completed bars so the test exercises the pattern,
+        # not the minimum-history guard.
+        forming = [c(i, 104, 106, 103, 104) for i in range(1, 12)]
         forming[-1]["close"] = 103
         p = [x for x in classical_patterns(forming, pivots, 1.0) if x["name"] == "DOUBLE_TOP"][0]
         self.assertFalse(p["confirmed"])
