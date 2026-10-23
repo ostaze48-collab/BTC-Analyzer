@@ -72,4 +72,9 @@
   if(backtestBtn)backtestBtn.addEventListener("click",()=>setTimeout(refreshReadiness,5000));
   refreshReadiness();
   setInterval(refreshReadiness,30000);
+
+  const script=document.createElement("script");
+  script.src="/static/v20.js";
+  script.defer=true;
+  document.body.appendChild(script);
 })();
