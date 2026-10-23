@@ -15,10 +15,11 @@ class InterfaceSyncTests(unittest.TestCase):
         html = INDEX.read_text(encoding="utf-8")
         self.assertIn(f"BTC AI Trader {APP_LABEL}", html)
         self.assertIn(f"<span>{APP_LABEL}</span>", html)
-        for script in ("v22.js", "v23.js", "v24.js", "v25.js"):
+        for script in ("v22.js", "v23.js", "v24.js", "v25.js", "v26.js"):
             self.assertEqual(html.count(f'/static/{script}'), 1, script)
         self.assertIn("Adaptive", html)
-        self.assertIn("Historical Memory", html)
+        self.assertIn("Historical", html)
+        self.assertIn("Deep Evidence", html)
 
     def test_all_configured_timeframes_are_available_on_chart(self):
         html = INDEX.read_text(encoding="utf-8")
