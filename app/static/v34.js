@@ -73,8 +73,8 @@
       </div>`).join('') || '<div class="urr-muted">لا توجد بيانات داعمة بعد.</div>';
 
     if (note) {
-      note.innerHTML = `🔒 <b>Real execution = ${r.live_execution_enabled ? 'ON' : 'OFF'}</b> · Auto target apply = ${r.target_auto_apply ? 'ON' : 'OFF'}<br>` +
-        `<b>${safe(r.message)}</b><br><span class="urr-muted">Score authorization = ${r.score_is_authorization ? 'YES' : 'NO'} · ${safe(r.policy)}</span>`;
+      note.innerHTML = `🔒 <b>Paper only = ${r.paper_only ? 'YES' : 'NO'}</b> · Strict Paper Review = ${r.strict_paper_review_allowed ? 'ALLOWED' : 'BLOCKED'} · Real execution eligibility = ${r.real_execution_eligibility ? 'YES' : 'NO'}<br>` +
+        `<b>${safe(r.message)}</b><br><span class="urr-muted">Score authorization = ${r.score_is_authorization ? 'YES' : 'NO'} · Auto target apply = ${r.target_auto_apply ? 'ON' : 'OFF'} · ${safe(r.policy)}</span>`;
     }
   }
 
