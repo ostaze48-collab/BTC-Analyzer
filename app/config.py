@@ -12,7 +12,20 @@ def _f(name: str, default: float) -> float:
 @dataclass(frozen=True)
 class Settings:
     symbol: str = os.getenv("BTC_SYMBOL", "BTCUSDT").upper()
-    intervals: tuple[str, ...] = ("1m", "5m", "15m", "1h", "4h")
+
+    # Comprehensive multi-timeframe stack used by the three brains and the
+    # higher-timeframe macro guard. 1s/1M are deliberately excluded: 1s is too
+    # noisy for this research model and 1M has variable duration that would
+    # complicate deterministic replay mechanics.
+    intervals: tuple[str, ...] = (
+        "1m", "3m", "5m", "15m", "30m",
+        "1h", "2h", "4h", "6h", "8h", "12h",
+        "1d", "3d", "1w",
+    )
+    micro_intervals: tuple[str, ...] = ("1m", "3m", "5m")
+    intraday_intervals: tuple[str, ...] = ("15m", "30m", "1h", "2h")
+    swing_intervals: tuple[str, ...] = ("4h", "6h", "8h", "12h", "1d")
+    macro_intervals: tuple[str, ...] = ("1d", "3d", "1w")
     history_limit: int = 500
 
     paper_start_capital: float = _f("PAPER_START_CAPITAL", 1000.0)
