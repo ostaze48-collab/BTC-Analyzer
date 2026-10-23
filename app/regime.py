@@ -8,12 +8,7 @@ def _dir(layer: dict[str, Any]) -> str:
 
 
 def classify_market_regime(snapshots: dict[str, dict[str, Any]], layers: dict[str, Any]) -> dict[str, Any]:
-    """Classify market state from confirmed multi-timeframe context.
-
-    This is deliberately deterministic and explainable. It is stored with each
-    paper trade so later ML can learn performance by regime instead of mixing
-    unrelated market conditions.
-    """
+    """Classify market state from confirmed multi-timeframe context."""
     micro = _dir(layers.get("MICRO", {}))
     intraday = _dir(layers.get("INTRADAY", {}))
     swing = _dir(layers.get("SWING", {}))
@@ -60,16 +55,30 @@ def classify_market_regime(snapshots: dict[str, dict[str, Any]], layers: dict[st
         "direction": direction,
         "volatility": volatility,
         "layers": {"micro": micro, "intraday": intraday, "swing": swing, "macro": macro},
-        "evidence": {"event_1h": event1h, "event_4h": event4h, "volume_ratio_1h": round(volume1h, 3), "volatility_1h": round(vol1h, 3), "volatility_4h": round(vol4h, 3), "daily_structure": s1d.get("structure")},
+        "evidence": {
+            "event_1h": event1h, "event_4h": event4h,
+            "volume_ratio_1h": round(volume1h, 3),
+            "volatility_1h": round(vol1h, 3), "volatility_4h": round(vol4h, 3),
+            "daily_structure": s1d.get("structure"),
+        },
     }
 
 
-def feature_vector(snapshots: dict[str, dict[str, Any]], layers: dict[str, Any], master: dict[str, Any], regime: dict[str, Any]) -> dict[str, Any]:
-    """Compact JSON-safe feature vector for future offline learning."""
+def feature_vector(
+    snapshots: dict[str, dict[str, Any]],
+    layers: dict[str, Any],
+    master: dict[str, Any],
+    regime: dict[str, Any],
+    cycle: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Auditable learning vector containing summaries + hidden background pool."""
     timeframes: dict[str, Any] = {}
+    background: dict[str, dict[str, float]] = {}
+    total_features = 0
     for tf, s in snapshots.items():
         if not s:
             continue
+        summary = s.get("feature_summary") or {}
         timeframes[tf] = {
             "trend": s.get("trend"), "structure": s.get("structure"),
             "rsi": round(float(s.get("rsi14", 0.0)), 3),
@@ -77,20 +86,33 @@ def feature_vector(snapshots: dict[str, dict[str, Any]], layers: dict[str, Any],
             "volatility_pct": round(float(s.get("volatility_pct", 0.0)), 4),
             "volume_ratio": round(float(s.get("volume_ratio", 0.0)), 4),
             "pattern_bias": round(float(s.get("pattern_bias", 0.0)), 4),
+            "feature_bias": round(float(summary.get("bias", 0.0)), 4),
+            "feature_count": int(summary.get("count", 0)),
             "structure_event": (s.get("structure_event") or {}).get("kind"),
             "liquidity_sweep": ((s.get("liquidity") or {}).get("sweep") or {}).get("direction"),
             "channel": (s.get("trend_channel") or {}).get("kind"),
+            "sample_count": int(s.get("sample_count", 0) or 0),
         }
+        pool = s.get("_feature_pool") or {}
+        if pool:
+            background[tf] = pool
+            total_features += len(pool)
+
     winner = master.get("winner") or {}
     return {
+        "schema": "learning_vector_v2",
         "regime": regime,
         "layers": layers,
+        "cycle_models": cycle or {},
         "winner": {
             "brain": winner.get("brain"), "direction": winner.get("direction"),
             "confidence": winner.get("confidence"), "safety": winner.get("safety_score"),
             "profit": winner.get("profit_score"), "final": winner.get("final_score"),
             "rr": winner.get("rr"), "ev_pct": winner.get("ev_pct"),
             "macro_direction": winner.get("macro_direction"), "pattern_bias": winner.get("pattern_bias"),
+            "feature_bias": winner.get("feature_bias"), "feature_count": winner.get("feature_count"),
         },
         "timeframes": timeframes,
+        "background_features": background,
+        "background_feature_count": total_features,
     }
