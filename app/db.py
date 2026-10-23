@@ -71,6 +71,16 @@ class Database:
                     FOREIGN KEY(trade_id) REFERENCES trades(id)
                 );
                 CREATE INDEX IF NOT EXISTS idx_trade_features_trade ON trade_features(trade_id);
+
+                CREATE TABLE IF NOT EXISTS research_review_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    eligible_samples INTEGER NOT NULL UNIQUE,
+                    status TEXT NOT NULL,
+                    captured_at TEXT NOT NULL,
+                    payload_json TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_review_snapshots_samples
+                    ON research_review_snapshots(eligible_samples);
                 """
             )
             self._ensure_column("trades", "market_regime", "TEXT")
@@ -177,6 +187,66 @@ class Database:
             rows = self.conn.execute("SELECT * FROM trades ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
             return [dict(r) for r in rows]
 
+    def record_review_snapshot(self, payload: dict[str, Any], min_trade_gap: int = 20) -> dict[str, Any]:
+        """Persist a V1.25 review only at trade-count checkpoints.
+
+        A checkpoint is recorded first at >=100 eligible samples, then only after
+        at least ``min_trade_gap`` additional eligible trades. Repeated API/UI
+        polling therefore cannot manufacture persistence evidence.
+        """
+        eligible = int(payload.get("eligible_samples", 0) or 0)
+        status = str(payload.get("status", "UNKNOWN"))
+        if eligible < 100:
+            return {"recorded": False, "reason": "NEED_100_ELIGIBLE", "eligible_samples": eligible}
+        gap = max(1, int(min_trade_gap))
+        with self._lock:
+            last = self.conn.execute(
+                "SELECT * FROM research_review_snapshots ORDER BY eligible_samples DESC LIMIT 1"
+            ).fetchone()
+            if last:
+                last_n = int(last["eligible_samples"])
+                if eligible <= last_n:
+                    return {"recorded": False, "reason": "NO_NEW_ELIGIBLE_TRADES", "eligible_samples": eligible, "last_eligible_samples": last_n}
+                if eligible - last_n < gap:
+                    return {"recorded": False, "reason": "CHECKPOINT_GAP_NOT_REACHED", "eligible_samples": eligible, "last_eligible_samples": last_n, "required_gap": gap}
+            captured = utc_now()
+            try:
+                cur = self.conn.execute(
+                    "INSERT INTO research_review_snapshots(eligible_samples, status, captured_at, payload_json) VALUES(?, ?, ?, ?)",
+                    (eligible, status, captured, json.dumps(payload, ensure_ascii=False, separators=(",", ":"))),
+                )
+                self.conn.commit()
+            except sqlite3.IntegrityError:
+                return {"recorded": False, "reason": "DUPLICATE_CHECKPOINT", "eligible_samples": eligible}
+            return {
+                "recorded": True,
+                "id": int(cur.lastrowid),
+                "eligible_samples": eligible,
+                "status": status,
+                "captured_at": captured,
+            }
+
+    def review_snapshots(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM research_review_snapshots ORDER BY eligible_samples ASC, id ASC LIMIT ?",
+                (max(1, min(int(limit), 500)),),
+            ).fetchall()
+            out: list[dict[str, Any]] = []
+            for row in rows:
+                try:
+                    payload = json.loads(row["payload_json"] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    payload = {}
+                out.append({
+                    "id": int(row["id"]),
+                    "eligible_samples": int(row["eligible_samples"]),
+                    "status": row["status"],
+                    "captured_at": row["captured_at"],
+                    "payload": payload,
+                })
+            return out
+
     def stats(self) -> dict[str, Any]:
         with self._lock:
             account = self.account()
@@ -277,5 +347,6 @@ class Database:
         with self._lock:
             self.conn.execute("DELETE FROM trade_features")
             self.conn.execute("DELETE FROM trades")
+            self.conn.execute("DELETE FROM research_review_snapshots")
             self.conn.execute("UPDATE account SET starting_capital=?, capital=?, updated_at=? WHERE id=1", (settings.paper_start_capital, settings.paper_start_capital, utc_now()))
             self.conn.commit()
