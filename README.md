@@ -1,51 +1,83 @@
-# BTC AI Trader V1.24
+# BTC AI Trader V1.25
 
 منظومة بحث ومحاكاة **Paper Trading فقط** لتحليل BTCUSDT عبر ثلاثة عقول مترابطة: `SCALP` و`INTRADAY` و`SWING`، ثم اختيار صفقة واحدة بواسطة `MASTER`.
 
-> التداول الحقيقي معطّل. لا توجد في V1.24 أي حالة أو درجة تسمح تلقائيًا باستخدام أموال حقيقية.
+> التداول الحقيقي معطّل. لا توجد في V1.25 أي حالة أو Trend أو Research Score تسمح تلقائيًا باستخدام أموال حقيقية.
 
-## ما الجديد في V1.24؟
+## ما الجديد في V1.25؟
 
-V1.24 تضيف **Unified Research Readiness**: حكم واحد يجمع الأدلة الموزعة عبر المنظومة بدل قراءة كل لوحة منفردة.
+V1.25 تضيف **Research Evidence History**: سجل زمني دائم لقوة الأدلة البحثية بدل الاعتماد على Snapshot لحظية واحدة من Unified Research Readiness.
 
-الحكم يقرأ أربع مجموعات رئيسية:
+كل Snapshot تحفظ بصورة مختصرة:
+
+- نسخة التطبيق.
+- Research Stage.
+- Research Score.
+- عدد Mandatory Gates الناجحة والفاشلة.
+- Core Readiness status/score.
+- Target Evidence status/pass.
+- وجود Incremental Feature OOS evidence.
+- عدد صفقات Paper.
+- Paper Profit Factor وMax Drawdown.
+- `paper_only` و`real_execution_eligibility`.
+
+### متى يُحفظ Snapshot؟
+
+السجل لا يكتب نسخة جديدة كل دقيقة بلا فائدة:
+
+- إذا حدث **تغيّر مادي** في Stage / Score / Gates / Target / Feature evidence / Paper trades، تُحفظ Snapshot فورًا.
+- إذا لم يتغير شيء جوهريًا، يُستخدم حد زمني افتراضي يقارب 15 دقيقة لمنع التكرار.
+- يحتفظ المخزن بحد أقصى يقارب 5000 Snapshot.
+- عند `Reset` للمحاكاة يُمسح Research Evidence History أيضًا، حتى لا تختلط حقبتان بحثيتان مختلفتان.
+
+## Evidence Trend
+
+V1.25 تصنف اتجاه قوة الأدلة إلى:
+
+- `INSUFFICIENT_HISTORY`: أقل من 3 Snapshots؛ لا تدّعي وجود Trend.
+- `IMPROVING`: تحسن واضح في Stage أو Mandatory Gates أو Research Score عبر التاريخ.
+- `STABLE`: الأدلة مستقرة دون تحسن/تراجع مادي.
+- `REGRESSING`: آخر خطوة تراجعت في Stage أو Gates أو هبط Score بشكل مادي.
+
+**هذا Trend للأدلة البحثية فقط، وليس إشارة BUY/SELL ولا توقعًا للسعر.**
+
+وتعرض الطبقة أيضًا:
+
+- Current Stage وBest Stage.
+- Stage transitions وStage regressions.
+- Research Score الحالي/الأول/المتوسط/الأفضل/الأسوأ.
+- Delta من أول Snapshot ومن السابقة.
+- Mandatory Gates الحالية وتغيرها من البداية.
+- Target pass rate عبر السجل.
+- Incremental Feature support rate.
+- عدد صفقات Paper الحالية.
+- طول الفترة الزمنية التي يغطيها السجل.
+
+## Unified Research Readiness V1.24
+
+تبقى V1.24 هي طبقة الحكم الموحّد الأساسية:
 
 1. **Core Readiness**: Paper sample + genuine chronological OOS + Profit Factor / Avg R / Return + Drawdown + Brain×Regime robustness + Cycle holdout.
-2. **Target Evidence**: Full Historical Target Walk-Forward + Frozen-entry Live Shadow عبر V1.23 Target Evidence Consensus Gate.
+2. **Target Evidence**: Full Historical Target Walk-Forward + Frozen-entry Live Shadow عبر Target Evidence Consensus Gate.
 3. **Feature Research**: Feature Edge Lab + Incremental Feature Walk-Forward كدليل داعم مستقل.
 4. **Execution Interlock**: يجب أن يبقى التنفيذ الحقيقي معطّلًا أثناء تقييم الجاهزية.
 
-### لماذا Feature Edge دليل داعم وليس بوابة إجبارية؟
+أعلى حالاتها ما زالت:
 
-إذا جعلنا اكتشاف Feature جديد شرطًا للترقية، فقد ندفع النظام إلى data mining / overfitting فقط حتى يجد متغيرًا يمر. لذلك:
+`STRICT_PAPER_REVIEW_CANDIDATE`
 
-- Feature Edge يظهر بوضوح داخل الحكم الموحد.
-- Chronological OOS وIncremental Walk-Forward يبيّنان إن كان هناك Edge إضافي قابل للقياس.
-- لكنه لا يستطيع وحده ترقية المرحلة، ولا يُجبر النظام على تصنيع Edge جديد.
-- لا يوجد Auto Promotion لأي Feature.
-
-## حالات Unified Readiness
-
-- `DATA_BUILDING`: البيانات والأدلة ما زالت غير ناضجة.
-- `EVIDENCE_BUILDING`: بعض الطبقات واعدة لكن Hard Gates ما زالت مفتوحة.
-- `SHADOW_VALIDATED`: Target Evidence متسقة لكن Core execution evidence لم يكتمل بعد.
-- `STRICT_PAPER_REVIEW_CANDIDATE`: جميع Mandatory Research Gates اجتازت، والمرحلة التالية المسموحة فقط هي **مراجعة/اختبار Paper أكثر صرامة**.
-
-حتى عند أعلى حالة:
+وهي لا تسمح إلا بمراجعة/اختبار Paper أكثر صرامة. حتى عند أعلى حالة:
 
 - `paper_only = true`
-- `strict_paper_review_allowed = true` فقط عند اجتياز Mandatory Gates.
 - `automatic_real_execution = false`
 - `real_execution_eligibility = false`
 - `live_execution_enabled = false`
 - `target_auto_apply = false`
 - `guarantee = NONE`
 
-`Research Score` معلوماتي فقط ولا يمكنه تجاوز Hard Gate فاشل.
+## Target Evidence Consensus
 
-## Target Evidence Consensus Gate V1.23
-
-لا يسمح حتى بمرحلة البحث التالية لمنطق الأهداف إلا عند اجتماع:
+لا يسمح حتى بمرحلة البحث التالية لمنطق الأهداف إلا عند اجتماع أدلة مستقلة:
 
 - نجاح Full Historical Target Walk-Forward على عقلين على الأقل.
 - Holdout موجب وعدم تضخم Drawdown فوق الحد.
@@ -67,7 +99,8 @@ V1.24 تضيف **Unified Research Readiness**: حكم واحد يجمع الأد
 8. Frozen-entry Live Shadow Target.
 9. Target Evidence Consensus Gate.
 10. Core Readiness Gate.
-11. Unified Research Readiness V1.24.
+11. Unified Research Readiness.
+12. **Research Evidence History V1.25**.
 
 ## السوق والفريمات
 
@@ -83,7 +116,7 @@ V1.24 تضيف **Unified Research Readiness**: حكم واحد يجمع الأد
 - أهداف Risk Engine الحالية من `1R` حتى `5R`.
 - Soft Pause قبل حد الخسارة الكلي.
 - Hard model drawdown limit = `25%` من رأس المال الابتدائي.
-- Target Advisor / Feature research / Historical Analog layers لا تغيّر التنفيذ تلقائيًا.
+- Target Advisor / Feature research / Historical Analog / Research History لا تغيّر التنفيذ تلقائيًا.
 
 ## واجهة الهاتف
 
@@ -100,10 +133,12 @@ V1.24 تضيف **Unified Research Readiness**: حكم واحد يجمع الأد
 - Full Historical Target Walk-Forward.
 - Frozen-entry Live Shadow Target.
 - Target Evidence Consensus Gate.
-- Unified Research Readiness مع Mandatory Gates + Supporting Evidence + أسباب الرفض.
+- Unified Research Readiness.
+- **Research Evidence History**: Trend + Score delta + Gates + Timeline لآخر Snapshots.
 
 ## API
 
+- `GET /api/research-history?limit=240`
 - `GET /api/unified-readiness`
 - `GET /api/target-evidence-gate`
 - `GET /api/live-shadow-target`
@@ -115,14 +150,17 @@ V1.24 تضيف **Unified Research Readiness**: حكم واحد يجمع الأد
 GitHub Actions يفحص:
 
 - Python compile.
-- JavaScript syntax حتى `v34.js`.
-- Unit tests لـUnified Readiness وTarget Evidence وNo-lookahead وFrozen-entry logic.
+- JavaScript syntax حتى `v35.js`.
+- Unit tests لـResearch Evidence History وUnified Readiness وTarget Evidence وNo-lookahead وFrozen-entry logic.
+- منع ادعاء Trend ناضج بعينتين فقط.
+- منع تكرار Snapshot غير المتغير داخل نافذة throttle.
+- حفظ التغير المادي فورًا.
 - تشغيل التطبيق و`/health`.
 - مزامنة رقم النسخة والواجهة والقدرات.
 - بقاء real execution معطّلًا.
 
 ## المبدأ
 
-`Market Data → Multi-Timeframe Analysis → 3 Brains → MASTER → Adaptive Risk → Historical Memory → OOS Target Validation → Live Shadow → Target Evidence Gate → Unified Research Readiness → Strict PAPER Review`
+`Market Data → Multi-Timeframe Analysis → 3 Brains → MASTER → Adaptive Risk → Historical Memory → OOS Target Validation → Live Shadow → Target Evidence Gate → Unified Research Readiness → Research Evidence History → Strict PAPER Review`
 
-الهدف ليس نسخة تدّعي الربح، بل منظومة تستطيع أن **تثبت** أين لديها Edge، ترفض الترقية عند ضعف الدليل، وتقول متى يجب عليها الامتناع عن التداول.
+الهدف ليس نسخة تدّعي الربح، بل منظومة تستطيع أن **تثبت** أين لديها Edge، تراقب هل الدليل يتحسن أو يتراجع مع الزمن، وترفض الترقية عندما تكون الأدلة غير مستقرة.
