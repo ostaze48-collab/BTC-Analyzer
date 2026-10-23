@@ -16,6 +16,7 @@ from .cycle_walkforward import CycleWalkForward
 from .db import Database
 from .edge_lab import analyze_feature_edge
 from .engine import TradingEngine
+from .extended_paper_observation import extended_paper_observation
 from .full_target_walkforward import run_full_target_walkforward
 from .incremental_edge import incremental_walkforward
 from .live_shadow_target import validate_live_shadow_target
@@ -123,6 +124,8 @@ async def health():
         "unified_readiness_mode": "HARD_GATE_AGGREGATION",
         "strict_paper_review": True,
         "strict_paper_review_mode": "OVERLAPPING_30_60_100_DIAGNOSTIC",
+        "extended_paper_observation": True,
+        "extended_paper_observation_mode": "PERSISTED_20_TRADE_CHECKPOINTS",
         "target_policy_auto_apply": False,
         "long_historical_memory": True,
         "historical_archive_mode": "LAZY_SHADOW_ONLY",
@@ -177,6 +180,11 @@ def _unified_snapshot(limit: int = 5000) -> tuple[dict[str, Any], list[dict[str,
     target_gate = target_evidence_gate(full_target_results, live)
     unified = unified_research_readiness(_readiness(), target_gate, edge, incremental)
     return unified, samples
+
+
+def _strict_snapshot(limit: int = 5000) -> dict[str, Any]:
+    unified, samples = _unified_snapshot(limit)
+    return strict_paper_review(unified, samples)
 
 
 @app.get("/api/readiness")
@@ -251,8 +259,25 @@ async def api_unified_readiness(limit: int = 5000):
 
 @app.get("/api/strict-paper-review")
 async def api_strict_paper_review(limit: int = 5000):
-    unified, samples = _unified_snapshot(limit)
-    return strict_paper_review(unified, samples)
+    return _strict_snapshot(limit)
+
+
+@app.get("/api/extended-paper-observation")
+async def api_extended_paper_observation(limit: int = 5000):
+    current = _strict_snapshot(limit)
+    history = db.review_snapshots(100)
+    return extended_paper_observation(current, history)
+
+
+@app.post("/api/extended-paper-observation/checkpoint")
+async def api_record_extended_paper_checkpoint(limit: int = 5000):
+    current = _strict_snapshot(limit)
+    checkpoint = db.record_review_snapshot(current, min_trade_gap=20)
+    history = db.review_snapshots(100)
+    return {
+        "checkpoint": checkpoint,
+        "observation": extended_paper_observation(current, history),
+    }
 
 
 def _normalize_brain(brain: str) -> str:
