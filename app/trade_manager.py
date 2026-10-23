@@ -4,12 +4,14 @@ from typing import Any
 
 from .config import settings
 from .db import Database
+from .risk_engine import build_risk_plan, hard_floor_breached
 
 
 class TradeManager:
     def __init__(self, db: Database):
         self.db = db
         self.active = self.db.active_trade()
+        self.last_rejection: dict[str, Any] | None = None
 
     def _round_trip_pnl(self, trade: dict[str, Any], qty: float, exit_price: float) -> float:
         sign = 1.0 if trade["direction"] == "LONG" else -1.0
@@ -17,31 +19,54 @@ class TradeManager:
         fees = (trade["entry"] * qty + exit_price * qty) * settings.paper_fee_rate
         return gross - fees
 
+    def _live_trade_pnl(self, price: float) -> float:
+        if not self.active:
+            return 0.0
+        remaining = float(self.active.get("remaining_qty", 0.0) or 0.0)
+        realized = float(self.active.get("realized_pnl", 0.0) or 0.0)
+        return realized + (self._round_trip_pnl(self.active, remaining, price) if remaining > 0 else 0.0)
+
     def open_from_proposal(self, p: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any] | None:
         if self.active:
-            return None
-        capital = float(self.db.account()["capital"])
-        risk_budget = capital * settings.risk_per_trade
-        risk_per_btc = abs(float(p["entry"]) - float(p["stop_loss"]))
-        if risk_per_btc <= 0:
-            return None
-        qty = min(risk_budget / risk_per_btc, capital / float(p["entry"]))
-        if qty <= 0:
+            self.last_rejection = {"reason": "ONE_TRADE_ONLY_LOCK"}
             return None
 
         context = context or {}
         regime = context.get("regime") or {}
+        account = self.db.account()
+        plan = build_risk_plan(p, account, regime)
+        if not plan.get("allowed"):
+            self.last_rejection = plan
+            return None
+
         payload = {
-            "brain": p["brain"], "direction": p["direction"], "entry": p["entry"],
-            "stop_loss": p["stop_loss"], "tp1": p["tp1"], "tp2": p["tp2"], "tp3": p["tp3"],
-            "quantity": qty, "confidence": p["confidence"], "safety_score": p["safety_score"],
-            "profit_score": p["profit_score"], "final_score": p["final_score"],
+            "brain": p["brain"],
+            "direction": p["direction"],
+            "entry": p["entry"],
+            "stop_loss": p["stop_loss"],
+            "tp1": plan["tp1"],
+            "tp2": plan["tp2"],
+            "tp3": plan["tp3"],
+            "quantity": plan["quantity"],
+            "confidence": p["confidence"],
+            "safety_score": p["safety_score"],
+            "profit_score": p["profit_score"],
+            "final_score": p["final_score"],
             "market_regime": regime.get("regime"),
+            "leverage": plan["leverage"],
+            "notional": plan["notional"],
+            "margin_used": plan["margin_used"],
+            "risk_budget": plan["risk_budget"],
+            "target_r": plan["target_r"],
             "meta": {
-                "risk_budget": risk_budget, "actual_risk": qty * risk_per_btc,
-                "rr": p["rr"], "ev_pct": p["ev_pct"], "entry_zone": p.get("entry_zone"),
-                "consensus": p.get("shared_context"), "macro_direction": p.get("macro_direction"),
-                "pattern_bias": p.get("pattern_bias", 0.0), "regime": regime,
+                "adaptive_risk_plan": plan,
+                "rr": p.get("rr"),
+                "ev_pct": p.get("ev_pct"),
+                "entry_zone": p.get("entry_zone"),
+                "consensus": p.get("shared_context"),
+                "macro_direction": p.get("macro_direction"),
+                "pattern_bias": p.get("pattern_bias", 0.0),
+                "regime": regime,
             },
         }
         self.active = self.db.create_trade(payload)
@@ -49,7 +74,10 @@ class TradeManager:
         self.active["mae_pct"] = float(self.active.get("mae_pct", 0.0) or 0.0)
         features = context.get("feature_vector")
         if features:
+            features = dict(features)
+            features["adaptive_risk_plan"] = plan
             self.db.record_feature(int(self.active["id"]), "ENTRY", features)
+        self.last_rejection = None
         return self.active
 
     def _update_excursion(self, price: float) -> None:
@@ -111,17 +139,32 @@ class TradeManager:
         if not self.active:
             return None
         self._update_excursion(price)
+
+        # Portfolio-level emergency brake. This is exact in the paper model at the
+        # observed price, but real markets can gap/slip beyond a planned limit.
+        account = self.db.account()
+        if hard_floor_breached(account, self._live_trade_pnl(price)):
+            return self._close_remaining(price, "MAX_25PCT_DRAWDOWN_KILL_SWITCH")
+
         t = self.active
         if t["direction"] == "LONG":
-            if price <= float(t["stop_loss"]): return self._close_remaining(price, "STOP_LOSS")
-            if not int(t["tp1_hit"]) and price >= float(t["tp1"]): self._partial(0.30, float(t["tp1"]), "tp1_hit"); t = self.active
-            if t and not int(t["tp2_hit"]) and price >= float(t["tp2"]): self._partial(0.40, float(t["tp2"]), "tp2_hit"); t = self.active
-            if t and price >= float(t["tp3"]): return self._close_remaining(float(t["tp3"]), "TP3")
+            if price <= float(t["stop_loss"]):
+                return self._close_remaining(price, "STOP_LOSS")
+            if not int(t["tp1_hit"]) and price >= float(t["tp1"]):
+                self._partial(0.30, float(t["tp1"]), "tp1_hit"); t = self.active
+            if t and not int(t["tp2_hit"]) and price >= float(t["tp2"]):
+                self._partial(0.40, float(t["tp2"]), "tp2_hit"); t = self.active
+            if t and price >= float(t["tp3"]):
+                return self._close_remaining(float(t["tp3"]), "ADAPTIVE_TARGET_R")
         else:
-            if price >= float(t["stop_loss"]): return self._close_remaining(price, "STOP_LOSS")
-            if not int(t["tp1_hit"]) and price <= float(t["tp1"]): self._partial(0.30, float(t["tp1"]), "tp1_hit"); t = self.active
-            if t and not int(t["tp2_hit"]) and price <= float(t["tp2"]): self._partial(0.40, float(t["tp2"]), "tp2_hit"); t = self.active
-            if t and price <= float(t["tp3"]): return self._close_remaining(float(t["tp3"]), "TP3")
+            if price >= float(t["stop_loss"]):
+                return self._close_remaining(price, "STOP_LOSS")
+            if not int(t["tp1_hit"]) and price <= float(t["tp1"]):
+                self._partial(0.30, float(t["tp1"]), "tp1_hit"); t = self.active
+            if t and not int(t["tp2_hit"]) and price <= float(t["tp2"]):
+                self._partial(0.40, float(t["tp2"]), "tp2_hit"); t = self.active
+            if t and price <= float(t["tp3"]):
+                return self._close_remaining(float(t["tp3"]), "ADAPTIVE_TARGET_R")
         return None
 
     def early_exit(self, price: float, reason: str = "EARLY_EXIT") -> dict[str, Any] | None:
@@ -132,14 +175,19 @@ class TradeManager:
             return None
         t = dict(self.active)
         if current_price:
+            total_live = self._live_trade_pnl(current_price)
             remaining = float(t["remaining_qty"])
             sign = 1 if t["direction"] == "LONG" else -1
-            unrealized = (current_price - float(t["entry"])) * remaining * sign
-            t["unrealized_pnl"] = round(unrealized, 4)
-            t["total_live_pnl"] = round(float(t["realized_pnl"]) + unrealized, 4)
+            unrealized_gross = (current_price - float(t["entry"])) * remaining * sign
+            t["unrealized_pnl"] = round(unrealized_gross, 4)
+            t["total_live_pnl"] = round(total_live, 4)
+            account = self.db.account()
+            t["live_equity"] = round(float(account["capital"]) + total_live, 4)
+            t["hard_floor"] = round(float(account["starting_capital"]) * (1.0 - settings.max_total_drawdown), 2)
         t["mfe_pct"] = round(float(t.get("mfe_pct", 0.0)), 4)
         t["mae_pct"] = round(float(t.get("mae_pct", 0.0)), 4)
         return t
 
     def reset(self) -> None:
         self.active = None
+        self.last_rejection = None
