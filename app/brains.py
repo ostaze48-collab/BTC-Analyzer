@@ -51,7 +51,8 @@ def _proposal(profile: BrainProfile, snapshots: dict[str, dict[str, Any]]) -> di
         direction = "WAIT"
 
     confidence = min(92.0, 50.0 + abs(bias) * 44.0)
-    price = float(anchor["close"])
+    live = snapshots.get("1m", {})
+    price = float(live.get("close", anchor["close"]))
     a = max(float(anchor["atr14"]), price * 0.001)
     support = float(anchor["support"])
     resistance = float(anchor["resistance"])
@@ -124,8 +125,6 @@ def _proposal(profile: BrainProfile, snapshots: dict[str, dict[str, Any]]) -> di
 def analyze_brains(snapshots: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     proposals = [_proposal(profile, snapshots) for profile in PROFILES]
 
-    # Second pass: the brains inform each other. Agreement raises confidence;
-    # disagreement lowers it, but does not force identical decisions.
     directional = [p for p in proposals if p.get("direction") in ("LONG", "SHORT")]
     for p in proposals:
         if p.get("direction") not in ("LONG", "SHORT"):
@@ -150,7 +149,6 @@ def analyze_brains(snapshots: dict[str, dict[str, Any]]) -> list[dict[str, Any]]
         else:
             p["shared_context"] = "SOLO"
 
-        # Recompute EV using the post-consensus probability.
         prob = p["win_probability"] / 100
         reward_pct = abs(p["tp2"] - p["entry"]) / p["entry"] * 100
         risk_pct = p["risk_pct"]
