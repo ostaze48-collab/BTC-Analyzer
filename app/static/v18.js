@@ -63,4 +63,9 @@
     renderExtendedTimeframes(state);
     renderCycle(state);
   };
+
+  const script=document.createElement("script");
+  script.src="/static/v19.js";
+  script.defer=true;
+  document.body.appendChild(script);
 })();
