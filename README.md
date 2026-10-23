@@ -1,4 +1,4 @@
-# BTC AI Trader V1.18
+# BTC AI Trader V1.19
 
 منظومة بحث ومحاكاة **Paper Trading فقط** لتحليل BTCUSDT عبر ثلاثة عقول مترابطة: `SCALP` و`INTRADAY` و`SWING`، ثم اختيار صفقة واحدة بواسطة `MASTER`.
 
@@ -13,26 +13,37 @@
 - Feature Edge Lab + Incremental Walk-Forward.
 - Historical Setup Memory + Analog Edge Validation.
 - Long Historical Replay Memory حسب العقل.
-- **Historical Signature Cache V1.18** لتسريع مقارنة مئات السوابق التاريخية.
+- Historical Signature Cache لتسريع مقارنة مئات السوابق.
+- **Historical Target Advisor V1.19** لاختيار 1R→5R تاريخيًا بشكل محافظ.
 - Adaptive paper risk/leverage، صفقة واحدة فقط، وحد حماية رأسمال تجريبي.
 - Learning Journal + Backtesting + Readiness Gate.
 
-## Historical Signature Cache V1.18
+## Historical Target Advisor V1.19
 
-بدل إعادة حساب كل المؤشرات عند كل نقطة تاريخية مع كل تحديث، تبني المنظومة بصمات سوق مضغوطة في الخلفية:
+عندما توجد صفقة مرشحة، تقرأ المنظومة الحالات التاريخية الأقرب لنفس السياق ثم تقارن أهداف `1R` إلى `5R`:
 
-- الهدف حتى نحو `720` حالة تاريخية موزعة على كامل الذاكرة المتاحة.
-- لا يبدأ Cache العميق قبل توفر `700` شمعة على الأقل في فريم العقل، حتى لا يعاد بناؤه على نافذة 500 شمعة متحركة.
-- Revision الأرشيف مستقرة: تعتمد على يوم/حجم تاريخي تقريبي بدل التغير مع كل شمعة دقيقة.
-- أثناء بناء Cache يستخدم النظام fallback أصغر (~180 حالة) ولا يتوقف التحليل الحي.
-- بعد اكتمال Cache تتم مقارنة الصفقة الحالية بكل البصمات بسرعة، ثم يُقيّم المسار التفصيلي فقط لأقرب الحالات.
-- لا تُنشأ بصمة قرب نهاية التاريخ ما لم توجد بعدها Future Window كاملة؛ لمنع Lookahead.
-- قاعدة تقييم المسار تبقى `STOP_FIRST_CONSERVATIVE`.
-- Signature Cache وHistorical Analog يظلان `SHADOW_ONLY` ووزنهما في MASTER = `0` حتى اجتياز تحقق OOS إضافي.
+- تستخدم Hit Rate المحسوب من كامل مجموعة الحالات المتشابهة.
+- تطبق Laplace smoothing لتقليل الثقة الزائدة في العينات الصغيرة.
+- في وضع Summary المحافظ تعتبر **كل حالة لم تصل للهدف = -1R** بدل افتراض أنها خرجت بتعادل أو ربح.
+- تعرض Conservative EV لكل هدف.
+- تختار أفضل هدف فقط إذا كان EV المحافظ موجبًا بما يكفي.
+- تعرض عدد الحالات، Evidence Strength، MFE/MAE، والهدف التاريخي المقترح.
+- تبقى `SHADOW_ONLY` و`weight_in_risk_engine = 0`؛ لا تغيّر TP الفعلي بعد.
+
+المرحلة التالية لاختبار هذه الطبقة هي Target Policy Walk-Forward: مقارنة هدف محلي مبني على الحالات المشابهة مقابل أفضل هدف ثابت تعلمناه من الماضي، على نقاط مستقبلية لم تدخل التدريب.
+
+## Historical Signature Cache
+
+- حتى نحو `720` بصمة تاريخية موزعة على الذاكرة المتاحة.
+- لا يبدأ Cache العميق قبل توفر `700` شمعة على فريم العقل.
+- أثناء البناء يستخدم النظام fallback أصغر ولا يوقف التحليل الحي.
+- لا تُستخدم نقطة تاريخية إذا لم توجد بعدها Future Window كاملة.
+- قاعدة المسار تبقى `STOP_FIRST_CONSERVATIVE`.
+- Historical Memory وSignature Cache وTarget Advisor كلها Shadow research layers حتى اجتياز OOS.
 
 ## الذاكرة التاريخية الطويلة
 
-- `SCALP`: تاريخ أعمق للفريمات الصغيرة والمتوسطة.
+- `SCALP`: أيام/أشهر إضافية للفريمات الصغيرة والمتوسطة.
 - `INTRADAY`: أشهر/سنوات حسب الفريم.
 - `SWING`: عدة سنوات على 4H/1D/1W/1M حيث يتوفر.
 - التحميل Lazy في الخلفية ولا يوقف startup.
@@ -45,7 +56,8 @@
 - LONG/SHORT وحجم المركز والرافعة Paper تُحدد تلقائيًا.
 - الرافعة الافتراضية القصوى: `5x`.
 - مخاطرة Stop ديناميكية بحد أعلى افتراضي يقارب `1.4%` للفرص الأقوى.
-- أهداف من `1R` حتى `5R`.
+- أهداف فعلية حالية من `1R` حتى `5R` حسب Risk Engine الحالي.
+- Target Advisor لا يغيرها بعد؛ يقارنها فقط تاريخيًا.
 - توقف وقائي قبل حد الخسارة الكلي.
 - حد النموذج التجريبي الكلي `25%`، وليس ضمانًا للسوق الحقيقي بسبب gaps/slippage.
 
@@ -55,12 +67,14 @@
 2. Analog metrics تدخل Edge Lab كـShadow Features.
 3. Chronological Train/Test يمنع خلط الماضي بالمستقبل.
 4. Incremental Walk-Forward يقارن Baseline مقابل Baseline+Feature.
-5. حتى عند ظهور Edge يبقى الوزن صفرًا إلى Full-engine OOS replay.
-6. ثم Paper/Shadow performance وReadiness Gate.
+5. Target Advisor يختار هدفًا تاريخيًا لكنه يبقى بوزن صفر.
+6. Target Policy Walk-Forward سيختبر هل اتباعه يحسن R/DD/PF فعليًا.
+7. ثم Full-engine OOS replay.
+8. ثم Paper/Shadow performance وReadiness Gate.
 
 ## واجهة الهاتف
 
-الواجهة Phone-First وتعرض كل طبقات المنظومة، ومنها:
+الواجهة Phone-First وتعرض:
 
 - MASTER والعقول الثلاثة.
 - كل الفريمات من الدقيقة إلى السنة.
@@ -69,8 +83,8 @@
 - Cycle/Network/Derivatives.
 - Feature Edge وIncremental Walk-Forward.
 - Historical Setup Memory وAnalog Validation.
-- Long Historical Memory.
-- Signature Cache: حالته، عدد البصمات، وقت البناء، وهل يتم استخدام Cache أو Fallback.
+- Long Historical Memory وSignature Cache.
+- Historical Target Advisor: جدول 1R→5R مع Hit Rate وConservative EV والهدف المرشح.
 
 ## التشغيل
 
@@ -108,8 +122,8 @@ http://127.0.0.1:8000
 يفحص GitHub Actions:
 
 - Python compile.
-- JavaScript syntax حتى `v28.js`.
-- Unit tests، بما فيها No-lookahead وcache revision stability.
+- JavaScript syntax حتى `v29.js`.
+- Unit tests، بما فيها No-lookahead وHistorical Target Advisor.
 - تشغيل التطبيق و`/health`.
 - مزامنة النسخة والواجهة مع قدرات النظام.
 
@@ -131,6 +145,6 @@ SOFT_PAUSE_DRAWDOWN=0.23
 
 ## المبدأ
 
-`Market Data → Multi-Timeframe Analysis → 3 Brains → MASTER → Adaptive Risk → Long Historical Memory → Signature Cache → Analog Evidence → OOS Validation → Journal → Readiness Gate`
+`Market Data → Multi-Timeframe Analysis → 3 Brains → MASTER → Adaptive Risk → Long Historical Memory → Signature Cache → Analog Evidence → Target Advisor → OOS Validation → Journal → Readiness Gate`
 
-الهدف ليس أكبر عدد مؤشرات، بل أكبر Pool مفيد ثم استبعاد الضوضاء والاحتفاظ فقط بما يثبت Edge مستقرًا خارج العينة.
+الهدف ليس زيادة عدد المؤشرات فقط، بل بناء Pool واسع، اختبار فائدته، وإبقاء أي عنصر جديد خارج القرار الحقيقي حتى يثبت Edge إضافيًا ومستقرًا خارج العينة.

@@ -18,6 +18,7 @@ from .edge_lab import analyze_feature_edge
 from .engine import TradingEngine
 from .incremental_edge import incremental_walkforward
 from .readiness import readiness_report
+from .target_advisor import build_historical_target_advisor_from_summary
 from .version import APP_LABEL, APP_NAME, APP_VERSION
 
 
@@ -99,6 +100,9 @@ async def health():
         "historical_analogs": True,
         "historical_analogs_mode": "SHADOW_ONLY",
         "analog_edge_validation": True,
+        "historical_target_advisor": True,
+        "historical_target_advisor_mode": "SHADOW_ONLY",
+        "historical_target_range_r": [1, 5],
         "long_historical_memory": True,
         "historical_archive_mode": "LAZY_SHADOW_ONLY",
         "historical_signature_cache": True,
@@ -127,6 +131,7 @@ async def api_version():
 async def api_state():
     state = engine.state()
     state["readiness"] = _readiness()
+    state["historical_target_advisor"] = build_historical_target_advisor_from_summary(engine.historical_analogs)
     state["app_version"] = APP_VERSION
     state["app_version_label"] = APP_LABEL
     return state
@@ -172,6 +177,11 @@ async def api_analog_validation(limit: int = 5000):
 @app.get("/api/historical-analogs")
 async def api_historical_analogs():
     return engine.historical_analogs
+
+
+@app.get("/api/historical-target-advisor")
+async def api_historical_target_advisor():
+    return build_historical_target_advisor_from_summary(engine.historical_analogs)
 
 
 @app.get("/api/historical-archive")
