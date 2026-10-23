@@ -13,6 +13,11 @@ import websockets
 from .config import settings
 
 MarketCallback = Callable[[dict], Awaitable[None]]
+DAILY_CAPACITY = 1800
+
+
+def _capacity(interval: str) -> int:
+    return DAILY_CAPACITY if interval == "1d" else settings.history_limit
 
 
 def _calendar_group(ts: int, interval: str) -> tuple[int, int, int]:
@@ -27,13 +32,11 @@ def _calendar_group(ts: int, interval: str) -> tuple[int, int, int]:
 
 
 def aggregate_monthly(monthly: list[dict], interval: str) -> list[dict]:
-    """Aggregate native 1M candles into 3M, 6M and 1y UTC calendar candles."""
     if interval not in ("3M", "6M", "1y"):
         raise ValueError(f"Unsupported synthetic interval: {interval}")
     groups: dict[tuple[int, int, int], list[dict]] = {}
     for candle in monthly:
         groups.setdefault(_calendar_group(int(candle["time"]), interval), []).append(candle)
-
     out: list[dict] = []
     for key in sorted(groups):
         rows = sorted(groups[key], key=lambda x: x["time"])
@@ -41,23 +44,28 @@ def aggregate_monthly(monthly: list[dict], interval: str) -> list[dict]:
         last_dt = datetime.fromtimestamp(int(rows[-1]["time"]), tz=timezone.utc)
         period_complete = last_dt.year == year and last_dt.month == expected_last_month and bool(rows[-1].get("closed"))
         out.append({
-            "time": int(rows[0]["time"]),
-            "close_time": int(rows[-1].get("close_time", rows[-1]["time"])),
-            "open": float(rows[0]["open"]),
-            "high": max(float(x["high"]) for x in rows),
-            "low": min(float(x["low"]) for x in rows),
-            "close": float(rows[-1]["close"]),
-            "volume": sum(float(x["volume"]) for x in rows),
-            "closed": period_complete,
+            "time": int(rows[0]["time"]), "close_time": int(rows[-1].get("close_time", rows[-1]["time"])),
+            "open": float(rows[0]["open"]), "high": max(float(x["high"]) for x in rows),
+            "low": min(float(x["low"]) for x in rows), "close": float(rows[-1]["close"]),
+            "volume": sum(float(x["volume"]) for x in rows), "closed": period_complete,
         })
     return out
+
+
+def _parse_row(row: list, now_ms: int) -> dict:
+    close_time_ms = int(row[6])
+    return {
+        "time": int(row[0] // 1000), "close_time": int(close_time_ms // 1000),
+        "open": float(row[1]), "high": float(row[2]), "low": float(row[3]),
+        "close": float(row[4]), "volume": float(row[5]), "closed": close_time_ms < now_ms,
+    }
 
 
 class MarketData:
     def __init__(self, callback: MarketCallback):
         self.callback = callback
         self.candles: dict[str, deque] = {
-            interval: deque(maxlen=settings.history_limit) for interval in settings.intervals
+            interval: deque(maxlen=_capacity(interval)) for interval in settings.intervals
         }
         self.last_price: float | None = None
         self.connected = False
@@ -67,24 +75,44 @@ class MarketData:
     async def _load_interval(self, client: httpx.AsyncClient, base: str, interval: str) -> None:
         response = await client.get(
             f"{base}/api/v3/klines",
-            params={"symbol": settings.symbol, "interval": interval, "limit": settings.history_limit},
+            params={"symbol": settings.symbol, "interval": interval, "limit": min(1000, settings.history_limit)},
             timeout=15,
         )
         response.raise_for_status()
         data = response.json()
         now_ms = int(time.time() * 1000)
-        series = deque(maxlen=settings.history_limit)
-        for row in data:
-            close_time_ms = int(row[6])
-            series.append({
-                "time": int(row[0] // 1000), "close_time": int(close_time_ms // 1000),
-                "open": float(row[1]), "high": float(row[2]), "low": float(row[3]),
-                "close": float(row[4]), "volume": float(row[5]),
-                "closed": close_time_ms < now_ms,
-            })
+        series = deque((_parse_row(row, now_ms) for row in data), maxlen=_capacity(interval))
         self.candles[interval] = series
         if data and interval == "1m":
             self.last_price = float(data[-1][4])
+
+    async def _load_long_daily(self, client: httpx.AsyncClient, base: str) -> None:
+        """Load enough 1d bars for 1458-day/4-year cycle measures."""
+        end_ms = int(time.time() * 1000)
+        start_ms = end_ms - int(DAILY_CAPACITY * 1.08 * 86_400_000)
+        cursor = max(0, start_ms)
+        rows: list[dict] = []
+        now_ms = end_ms
+        while cursor < end_ms:
+            response = await client.get(
+                f"{base}/api/v3/klines",
+                params={"symbol": settings.symbol, "interval": "1d", "startTime": cursor, "endTime": end_ms, "limit": 1000},
+                timeout=20,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            if not payload:
+                break
+            rows.extend(_parse_row(row, now_ms) for row in payload)
+            nxt = int(payload[-1][6]) + 1
+            if nxt <= cursor:
+                break
+            cursor = nxt
+            if len(payload) < 1000:
+                break
+        unique = {r["time"]: r for r in rows}
+        ordered = [unique[k] for k in sorted(unique)][-DAILY_CAPACITY:]
+        self.candles["1d"] = deque(ordered, maxlen=DAILY_CAPACITY)
 
     def _rebuild_synthetic(self) -> None:
         monthly = list(self.candles.get("1M", []))
@@ -99,7 +127,11 @@ class MarketData:
         async with httpx.AsyncClient(follow_redirects=True) as client:
             for base in settings.rest_bases:
                 try:
-                    await asyncio.gather(*(self._load_interval(client, base, i) for i in settings.native_intervals))
+                    await asyncio.gather(*(
+                        self._load_interval(client, base, i)
+                        for i in settings.native_intervals if i != "1d"
+                    ))
+                    await self._load_long_daily(client, base)
                     self._rebuild_synthetic()
                     return base
                 except Exception as exc:
@@ -107,10 +139,7 @@ class MarketData:
         raise RuntimeError(f"All history endpoints failed: {last_error}")
 
     def _history_ready(self) -> bool:
-        return all(
-            sum(1 for c in self.candles[i] if c.get("closed")) >= settings.min_bars(i)
-            for i in settings.intervals
-        )
+        return all(sum(1 for c in self.candles[i] if c.get("closed")) >= settings.min_bars(i) for i in settings.intervals)
 
     async def _history_retry_loop(self) -> None:
         while not self._history_ready():
@@ -179,7 +208,6 @@ class MarketData:
                         self._upsert(interval, candle)
                         self.last_price = candle["close"]
                         await self.callback({"type": "market", "interval": interval, "candle": candle, "closed": candle["closed"]})
-
                         if interval == "1M":
                             self._rebuild_synthetic()
                             for synthetic in settings.synthetic_intervals:
