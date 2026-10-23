@@ -1,4 +1,4 @@
-# BTC AI Trader V1.15
+# BTC AI Trader V1.16
 
 منظومة بحث ومحاكاة **Paper Trading فقط** لتحليل BTCUSDT عبر ثلاثة عقول مترابطة: `SCALP` و`INTRADAY` و`SWING`، ثم اختيار صفقة واحدة بواسطة `MASTER`.
 
@@ -15,6 +15,7 @@
 - Feature Edge Lab: فصل زمني Train/Test لقياس فائدة الخصائص.
 - Incremental Edge Walk-Forward: مقارنة Baseline مقابل Baseline+Feature filter عبر نوافذ لاحقة.
 - Historical Setup Memory: يقارن الصفقة المرشحة بحالات شارت سابقة مشابهة ويقيس ما حدث بعدها بـR multiples وقاعدة STOP_FIRST المحافظة.
+- Analog Edge Validation: تختبر هل بيانات السوابق نفسها تضيف Edge خارج العينة بدل اعتبار التشابه التاريخي دليلًا كافيًا بحد ذاته.
 - Learning Journal: يحفظ Features عند الدخول والخروج، MFE/MAE، Regime، العقل، والنتيجة.
 - Replay/Backtesting لنفس منطق العقول وإدارة المخاطر.
 
@@ -42,7 +43,20 @@
 7. Readiness Gate.
 8. فقط بعد ذلك يمكن بحث الانتقال الحقيقي يدويًا.
 
-Historical Analog وNetwork وDerivatives لا يغيرون MASTER حاليًا (`weight = 0`).
+Historical Analog وNetwork وDerivatives لا يغيرون MASTER حاليًا (`weight = 0`). حتى إذا ظهرت Historical Analog كمرشح مفيد في Walk-Forward، تبقى بوزن صفر إلى أن تجتاز Full-engine OOS replay لاحقًا.
+
+## كيف تُقرأ الصفقة على الشارت السابق
+
+عندما توجد صفقة مرشحة، Historical Setup Memory تبحث عن حالات سابقة مشابهة من حيث اتجاه الفريمات، Regime، الاتجاه والبنية، RSI، EMA/VWAP distance، الحجم، التقلب، وطبقات Micro/Intraday/Swing/Macro. ثم تتابع ما حدث بعد كل حالة سابقة وتعرض:
+
+- عدد الحالات المشابهة.
+- متوسط التشابه.
+- نسبة ضرب Stop قبل 1R.
+- متوسط MFE/MAE بوحدة R.
+- نسبة وصول الحالات إلى 1R و2R و3R و4R و5R.
+- أمثلة زمنية من الحالات السابقة.
+
+V1.16 تضيف اختبارًا مستقلًا لهذه المعلومات داخل Edge Lab وIncremental Walk-Forward لتحديد هل كانت هذه البيانات السابقة مفيدة فعلًا أم مجرد ارتباط تاريخي.
 
 ## واجهة الهاتف
 
@@ -56,6 +70,7 @@ Historical Analog وNetwork وDerivatives لا يغيرون MASTER حاليًا 
 - Network/Derivatives Shadow data.
 - Feature Edge Lab وIncremental Walk-Forward.
 - Historical Setup Memory ونتائج الحالات السابقة المشابهة.
+- Analog Edge Validation: هل السوابق أثبتت قيمة إضافية أم لا.
 - Backtest وLearning Journal وسجل الصفقات.
 
 ## التشغيل محليًا
@@ -94,10 +109,10 @@ http://127.0.0.1:8000
 GitHub Actions يتحقق من:
 
 - Python compile.
-- Syntax لكل ملفات JavaScript الحالية.
+- Syntax لكل ملفات JavaScript الحالية حتى `v26.js`.
 - Unit Tests.
 - تشغيل التطبيق و`/health`.
-- مزامنة واجهة الإصدار مع ملفات V1.12+.
+- مزامنة رقم الإصدار وواجهات الهاتف مع ملفات التطوير الحديثة.
 
 خدمة Render المرتبطة بفرع `main` تنشر تلقائيًا بعد نجاح checks حسب إعداد الخدمة.
 
@@ -119,6 +134,6 @@ SOFT_PAUSE_DRAWDOWN=0.23
 
 ## مبدأ المشروع
 
-`Market Data → Multi-Timeframe Analysis → 3 Brains → MASTER → Adaptive Risk → One Trade → Historical Evidence → Journal → Walk-Forward Learning → Readiness Gate`
+`Market Data → Multi-Timeframe Analysis → 3 Brains → MASTER → Adaptive Risk → One Trade → Historical Evidence → Analog Validation → Journal → Walk-Forward Learning → Readiness Gate`
 
 الهدف ليس زيادة عدد المؤشرات، بل استخدام Pool واسع ثم الاحتفاظ فقط بما يثبت Edge إضافيًا ومستقرًا خارج العينة.

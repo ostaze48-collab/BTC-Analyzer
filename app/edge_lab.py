@@ -92,8 +92,6 @@ def _flatten_selected(payload: dict[str, Any]) -> dict[str, float]:
         if x is not None:
             out[f"derivatives.{name}"] = x
 
-    # A small set of normalized/contextual derivatives fields is useful for
-    # research without admitting absolute non-stationary prices/notional levels.
     fields = {
         "derivatives.funding": ((derivatives.get("premium") or {}).get("current_funding_rate")),
         "derivatives.avg_funding": ((derivatives.get("premium") or {}).get("avg_recent_funding_rate")),
@@ -109,19 +107,47 @@ def _flatten_selected(payload: dict[str, Any]) -> dict[str, float]:
         if x is not None:
             out[name] = x
 
+    # Historical-analog evidence is already direction-specific because the path
+    # is evaluated in the candidate LONG/SHORT direction. Keep it non-directional
+    # here and validate whether stronger historical outcomes actually add OOS edge.
+    analog = payload.get("historical_analogs") or {}
+    analog_fields = {
+        "avg_similarity_pct": analog.get("avg_similarity_pct"),
+        "stop_before_1r_pct": analog.get("stop_before_1r_pct"),
+        "avg_mfe_r": analog.get("avg_mfe_r"),
+        "avg_mae_r": analog.get("avg_mae_r"),
+        "hit_1r_pct": analog.get("hit_1r_pct"),
+        "hit_2r_pct": analog.get("hit_2r_pct"),
+        "hit_3r_pct": analog.get("hit_3r_pct"),
+        "hit_4r_pct": analog.get("hit_4r_pct"),
+        "hit_5r_pct": analog.get("hit_5r_pct"),
+    }
+    for name, value in analog_fields.items():
+        x = _finite(value)
+        if x is not None:
+            out[f"analog.{name}"] = x
+
     return out
 
 
 def _is_directional(path: str) -> bool:
     leaf = path.split(".")[-1]
+    if path.startswith("analog."):
+        return False
     if path.startswith(("network.", "derivatives.", "cycle.")):
-        # Context biases/ratios are interpreted as market-direction features.
         return path not in {"derivatives.oi_change_pct"}
     return leaf.startswith(_DIRECTIONAL_PREFIXES)
 
 
 def _family(path: str) -> str:
     parts = path.split(".")
+    if path.startswith("analog."):
+        leaf = parts[-1]
+        if leaf.startswith("hit_"):
+            return "analog:target_reach"
+        if leaf in ("avg_mfe_r", "avg_mae_r", "stop_before_1r_pct"):
+            return "analog:path_risk"
+        return "analog:similarity"
     if len(parts) >= 3 and parts[0] == "tf":
         leaf = parts[-1]
         family = leaf.split("_")[0]
@@ -146,6 +172,8 @@ def _family(path: str) -> str:
 
 
 def _source(path: str) -> str:
+    if path.startswith("analog."):
+        return "ANALOG_SHADOW"
     if path.startswith("tf."):
         return "TECHNICAL"
     if path.startswith("network."):
@@ -207,8 +235,6 @@ def analyze_feature_edge(samples: list[dict[str, Any]]) -> dict[str, Any]:
         test_spread = _quartile_spread(test_x, test_y, orientation)
         same_sign = train_corr == 0 or test_corr == 0 or (train_corr > 0) == (test_corr > 0)
 
-        # Regime stability: does the oriented quartile spread remain positive in
-        # multiple test regimes with enough observations?
         regime_edges: dict[str, float] = {}
         for regime in sorted({r["regime"] for r in prepared if r["split"] == "TEST"}):
             subset = [(r["values"][name], r["r"]) for r in prepared if r["split"] == "TEST" and r["regime"] == regime and name in r["values"]]
@@ -248,8 +274,6 @@ def analyze_feature_edge(samples: list[dict[str, Any]]) -> dict[str, Any]:
     ranked = sorted(rows, key=lambda r: (r["status"] == "CANDIDATE", r["edge_score"]), reverse=True)
     candidates = [r for r in ranked if r["status"] == "CANDIDATE"]
 
-    # Keep only the best feature per timeframe/family in the diversified list so
-    # RSI-14/15/16 style correlated variants cannot masquerade as independent votes.
     best_by_family: dict[str, dict[str, Any]] = {}
     for row in candidates:
         fam = row["family"]
