@@ -50,7 +50,11 @@ class TradingEngine:
         await self.analyze(force=True)
 
     async def stop(self) -> None:
-        await asyncio.gather(self.market.stop(), self.historical_archive.stop())
+        await asyncio.gather(
+            self.market.stop(),
+            self.historical_archive.stop(),
+            self.analog_source.stop(),
+        )
 
     def _build_snapshots(self) -> dict[str, dict[str, Any]]:
         return {
@@ -88,7 +92,8 @@ class TradingEngine:
         )
         payload["historical_analogs"] = self.historical_analogs
         payload["historical_archive"] = self.archive_state
-        payload["schema"] = "learning_vector_v6"
+        payload["signature_cache"] = self.historical_analogs.get("signature_cache", {})
+        payload["schema"] = "learning_vector_v7"
         return payload
 
     def _public_snapshots(self) -> dict[str, dict[str, Any]]:
@@ -173,9 +178,6 @@ class TradingEngine:
                     advisory["derivatives_intelligence"] = self.derivatives
                     active = None
 
-            # Historical analogs are a shadow evidence layer. Long history loads
-            # lazily in the background for the relevant brain; current analysis
-            # never blocks waiting for the archive.
             await self._refresh_analogs(advisory, force=force)
 
             if not active and advisory["action"] in ("LONG", "SHORT") and advisory["winner"]:
@@ -216,6 +218,7 @@ class TradingEngine:
             "cycle_models": self.cycle, "network_intelligence": self.network,
             "derivatives_intelligence": self.derivatives, "historical_analogs": self.historical_analogs,
             "historical_archive": self.archive_state,
+            "signature_cache": self.historical_analogs.get("signature_cache", {}),
             "master": self.master,
             "active_trade": self.trade_manager.state(price), "stats": stats,
             "learning": self.learning_cache,
@@ -241,7 +244,8 @@ class TradingEngine:
                 "intervals": list(self.market.candles.keys()), "pattern_engine": True, "learning_journal": True,
                 "cycle_models": True, "network_intelligence": "SHADOW_ONLY",
                 "derivatives_intelligence": "SHADOW_ONLY", "historical_analogs": "SHADOW_ONLY",
-                "historical_archive": "LAZY_SHADOW_ONLY", "analysis_horizon": "1m→1y",
+                "historical_archive": "LAZY_SHADOW_ONLY", "signature_cache": "BACKGROUND_SHADOW_ONLY",
+                "analysis_horizon": "1m→1y",
             },
         }
 
