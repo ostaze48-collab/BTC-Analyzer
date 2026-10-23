@@ -15,6 +15,8 @@ _LAYER_NAMES = ("MICRO", "INTRADAY", "SWING", "MACRO")
 _HORIZON_BY_BRAIN = {"SCALP": 48, "INTRADAY": 64, "SWING": 90}
 _MIN_HISTORY = 90
 _SIGNATURE_TARGET = 720
+_DEEP_CACHE_MIN_BARS = 700
+_DAY_SECONDS = 86_400
 
 
 def _dir_value(value: str | None) -> float:
@@ -114,23 +116,34 @@ def _evaluate_path(future: list[dict[str, Any]], direction: str, entry: float, r
         stop_hit = low <= stop if direction == "LONG" else high >= stop
         reached = max(0.0, favorable)
         if stop_hit:
-            return {"max_r": round(max_r, 3), "stopped": True, "expired": False,
-                    "mfe_r": round(max(0.0, mfe_r), 3), "mae_r": round(max(0.0, mae_r), 3)}
+            return {
+                "max_r": round(max_r, 3), "stopped": True, "expired": False,
+                "mfe_r": round(max(0.0, mfe_r), 3), "mae_r": round(max(0.0, mae_r), 3),
+            }
         max_r = max(max_r, min(5.0, reached))
         if max_r >= 5.0:
-            return {"max_r": 5.0, "stopped": False, "expired": False,
-                    "mfe_r": round(max(0.0, mfe_r), 3), "mae_r": round(max(0.0, mae_r), 3)}
-    return {"max_r": round(max_r, 3), "stopped": False, "expired": True,
-            "mfe_r": round(max(0.0, mfe_r), 3), "mae_r": round(max(0.0, mae_r), 3)}
+            return {
+                "max_r": 5.0, "stopped": False, "expired": False,
+                "mfe_r": round(max(0.0, mfe_r), 3), "mae_r": round(max(0.0, mae_r), 3),
+            }
+    return {
+        "max_r": round(max_r, 3), "stopped": False, "expired": True,
+        "mfe_r": round(max(0.0, mfe_r), 3), "mae_r": round(max(0.0, mae_r), 3),
+    }
 
 
 def _history_revision(history_by_tf: dict[str, list[dict[str, Any]]], brain: str, anchor_tf: str) -> tuple[Any, ...]:
+    """Stable revision: ignores minute-to-minute append noise.
+
+    Deep archives preserve the old prefix, so day buckets and coarse size buckets
+    are enough to notice archive refreshes while avoiding a cache rebuild each bar.
+    """
     parts: list[Any] = [brain, anchor_tf]
     for tf in sorted(history_by_tf):
         rows = history_by_tf[tf]
         first = int(rows[0].get("time", 0)) if rows else 0
         last = int(rows[-1].get("time", 0)) if rows else 0
-        parts.extend((tf, len(rows), first, last))
+        parts.extend((tf, len(rows) // 250, first // _DAY_SECONDS, last // _DAY_SECONDS))
     return tuple(parts)
 
 
@@ -140,7 +153,7 @@ def build_signature_memory(
     anchor_tf: str,
     max_candidates: int = _SIGNATURE_TARGET,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Build compact prior-market signatures once per history revision."""
+    """Build compact prior-market signatures once per stable deep-history revision."""
     started = time.monotonic()
     anchor_history = list(history_by_tf.get(anchor_tf, []))
     horizon = _HORIZON_BY_BRAIN.get(brain, 64)
@@ -159,14 +172,20 @@ def build_signature_memory(
         if not past_anchor:
             continue
         memory.append({
-            "idx": idx, "time": ts, "entry": _safe_float(candle.get("close"), 0.0),
-            "regime": regime.get("regime"), "trend": past_anchor.get("trend"),
+            "idx": idx,
+            "time": ts,
+            "entry": _safe_float(candle.get("close"), 0.0),
+            "regime": regime.get("regime"),
+            "trend": past_anchor.get("trend"),
             "structure": past_anchor.get("structure"),
             "signature": _signature(past_anchor, layers, regime),
         })
     return memory, {
-        "candidates": len(memory), "build_seconds": round(time.monotonic() - started, 3),
-        "stride": stride, "anchor_bars": len(anchor_history), "target_candidates": max_candidates,
+        "candidates": len(memory),
+        "build_seconds": round(time.monotonic() - started, 3),
+        "stride": stride,
+        "anchor_bars": len(anchor_history),
+        "target_candidates": max_candidates,
     }
 
 
@@ -187,8 +206,10 @@ def analyze_historical_analogs(
     if direction not in ("LONG", "SHORT") or not anchor_tf or not current_anchor:
         return {"status": "NO_ACTIVE_CANDIDATE", "weight_in_master": 0.0, "matches": 0}
     if len(anchor_history) < _MIN_HISTORY + 20:
-        return {"status": "INSUFFICIENT_HISTORY", "weight_in_master": 0.0,
-                "matches": 0, "anchor": anchor_tf, "available_bars": len(anchor_history)}
+        return {
+            "status": "INSUFFICIENT_HISTORY", "weight_in_master": 0.0,
+            "matches": 0, "anchor": anchor_tf, "available_bars": len(anchor_history),
+        }
 
     risk_pct = _safe_float(proposal.get("risk_pct"), 0.0)
     if risk_pct <= 0:
@@ -204,7 +225,7 @@ def analyze_historical_analogs(
 
     cache_used = signature_memory is not None
     if signature_memory is None:
-        # Conservative fallback while the background signature cache is building.
+        # Fallback stays deliberately small while deep archive/signatures load.
         signature_memory, _ = build_signature_memory(history_by_tf, brain, anchor_tf, max_candidates=180)
 
     scored: list[tuple[float, dict[str, Any]]] = []
@@ -214,11 +235,11 @@ def analyze_historical_analogs(
             scored.append((sim, row))
     scored.sort(key=lambda x: (x[0], x[1].get("time", 0)), reverse=True)
 
-    top_rows = scored[:max_matches]
     top: list[dict[str, Any]] = []
-    for sim, row in top_rows:
+    for sim, row in scored[:max_matches]:
         idx = int(row.get("idx", -1))
-        if idx < 0 or idx + 1 >= len(anchor_history):
+        # Cache only contains rows with a complete future horizon at build time.
+        if idx < 0 or idx + horizon >= len(anchor_history):
             continue
         entry = _safe_float(row.get("entry"), 0.0)
         result = _evaluate_path(anchor_history[idx + 1: idx + 1 + horizon], direction, entry, risk_pct)
@@ -229,11 +250,17 @@ def analyze_historical_analogs(
         })
 
     if not top:
-        return {"status": "NO_CLOSE_ANALOGS", "weight_in_master": 0.0, "matches": 0,
-                "anchor": anchor_tf, "direction": direction, "risk_pct": round(risk_pct, 4),
-                "signature_cache_used": cache_used, "signature_candidates_scanned": len(signature_memory)}
+        return {
+            "status": "NO_CLOSE_ANALOGS", "weight_in_master": 0.0, "matches": 0,
+            "anchor": anchor_tf, "direction": direction, "risk_pct": round(risk_pct, 4),
+            "signature_cache_used": cache_used,
+            "signature_candidates_scanned": len(signature_memory),
+        }
 
-    rates = {f"hit_{r}r_pct": round(sum(1 for m in top if m["max_r"] >= r) / len(top) * 100.0, 2) for r in range(1, 6)}
+    rates = {
+        f"hit_{r}r_pct": round(sum(1 for m in top if m["max_r"] >= r) / len(top) * 100.0, 2)
+        for r in range(1, 6)
+    }
     stop_rate = sum(1 for m in top if m["stopped"]) / len(top) * 100.0
     avg_similarity = fmean(m["similarity"] for m in top)
     avg_mfe = fmean(m["mfe_r"] for m in top)
@@ -241,19 +268,26 @@ def analyze_historical_analogs(
     quality = "STRONG" if len(top) >= 18 and avg_similarity >= 0.70 else ("MODERATE" if len(top) >= 10 else "WEAK")
 
     return {
-        "status": "READY", "mode": "HISTORICAL_ANALOG_SHADOW", "weight_in_master": 0.0,
-        "brain": brain, "direction": direction, "anchor": anchor_tf,
-        "risk_pct": round(risk_pct, 4), "horizon_bars": horizon,
+        "status": "READY",
+        "mode": "HISTORICAL_ANALOG_SHADOW",
+        "weight_in_master": 0.0,
+        "brain": brain,
+        "direction": direction,
+        "anchor": anchor_tf,
+        "risk_pct": round(risk_pct, 4),
+        "horizon_bars": horizon,
         "history_bars_scanned": len(anchor_history),
         "signature_cache_used": cache_used,
         "signature_candidates_scanned": len(signature_memory),
-        "matches": len(top), "quality": quality,
+        "matches": len(top),
+        "quality": quality,
         "avg_similarity_pct": round(avg_similarity * 100.0, 2),
         "stop_before_1r_pct": round(stop_rate, 2),
-        "avg_mfe_r": round(avg_mfe, 3), "avg_mae_r": round(avg_mae, 3),
+        "avg_mfe_r": round(avg_mfe, 3),
+        "avg_mae_r": round(avg_mae, 3),
         **rates,
         "recent_examples": sorted(top, key=lambda m: m["time"], reverse=True)[:8],
-        "method": "Historical signatures are precomputed across the loaded multi-timeframe archive; only top-similarity states are path-evaluated with STOP_FIRST_CONSERVATIVE.",
+        "method": "Historical signatures are precomputed across deep multi-timeframe memory; only top-similarity states are path-evaluated with STOP_FIRST_CONSERVATIVE.",
         "warning": "Historical analogs are evidence, not a guarantee. MASTER weight remains zero until separate out-of-sample validation passes.",
     }
 
@@ -291,18 +325,29 @@ class HistoricalAnalogEngine:
                 self._memory_key = current_key
                 self._memory_meta = {"status": "READY", **meta}
         except Exception as exc:
-            self._memory_meta = {"status": "ERROR", "candidates": len(self._memory), "error": str(exc)[:160]}
+            self._memory_meta = {
+                "status": "ERROR", "candidates": len(self._memory), "error": str(exc)[:160],
+            }
         finally:
             self._memory_task = None
             self._pending_memory_key = None
 
-    def _schedule_memory(self, key: tuple[Any, ...], history_by_tf: dict[str, list[dict[str, Any]]], brain: str, anchor_tf: str) -> None:
+    def _schedule_memory(
+        self,
+        key: tuple[Any, ...],
+        history_by_tf: dict[str, list[dict[str, Any]]],
+        brain: str,
+        anchor_tf: str,
+    ) -> None:
         if self._memory_key == key:
             return
         if self._memory_task and not self._memory_task.done():
             return
         self._pending_memory_key = key
-        self._memory_meta = {"status": "BUILDING", "candidates": len(self._memory), "target_candidates": _SIGNATURE_TARGET}
+        self._memory_meta = {
+            "status": "BUILDING", "candidates": len(self._memory),
+            "target_candidates": _SIGNATURE_TARGET,
+        }
         self._memory_task = asyncio.create_task(
             asyncio.to_thread(build_signature_memory, history_by_tf, brain, anchor_tf, _SIGNATURE_TARGET),
             name=f"historical-signatures-{brain.lower()}",
@@ -320,32 +365,53 @@ class HistoricalAnalogEngine:
         proposal = proposal or {}
         brain = str(proposal.get("brain", ""))
         anchor_tf = str(proposal.get("anchor", ""))
-        history_key = _history_revision(history_by_tf, brain, anchor_tf) if brain and anchor_tf else tuple()
-        self._consume_memory_task(history_key)
-        if brain and anchor_tf:
-            self._schedule_memory(history_key, history_by_tf, brain, anchor_tf)
+        anchor_rows = list(history_by_tf.get(anchor_tf, []))
+        deep_history_ready = bool(brain and anchor_tf and len(anchor_rows) >= _DEEP_CACHE_MIN_BARS)
+        history_key = _history_revision(history_by_tf, brain, anchor_tf) if deep_history_ready else tuple()
 
+        if deep_history_ready:
+            self._consume_memory_task(history_key)
+            self._schedule_memory(history_key, history_by_tf, brain, anchor_tf)
+        elif self._memory_task and self._memory_task.done():
+            # Consume only for cleanup; shallow rolling history always uses fallback.
+            self._consume_memory_task(tuple())
+
+        cache_ready = deep_history_ready and self._memory_key == history_key
         key = (
-            brain, proposal.get("direction"), anchor_tf,
-            round(_safe_float(proposal.get("risk_pct")), 2), regime.get("regime"),
+            brain,
+            proposal.get("direction"),
+            anchor_tf,
+            round(_safe_float(proposal.get("risk_pct")), 2),
+            regime.get("regime"),
             (layers.get("MACRO") or {}).get("direction"),
             (snapshots.get(anchor_tf) or {}).get("trend"),
-            self._memory_key == history_key,
-            len(self._memory) if self._memory_key == history_key else 0,
+            cache_ready,
+            len(self._memory) if cache_ready else 0,
         )
         now = time.monotonic()
         if not force and key == self._last_key and now - self._last_at < self.ttl_seconds:
-            self.state["signature_cache"] = dict(self._memory_meta)
+            meta = dict(self._memory_meta)
+            if not deep_history_ready:
+                meta.update({"status": "WAITING_FOR_DEEP_HISTORY", "minimum_anchor_bars": _DEEP_CACHE_MIN_BARS})
+            self.state["signature_cache"] = meta
             return self.state
         if self._lock.locked():
             return self.state
+
         async with self._lock:
-            usable_memory = self._memory if self._memory_key == history_key else None
+            usable_memory = self._memory if cache_ready else None
             self.state = await asyncio.to_thread(
                 analyze_historical_analogs,
                 proposal, snapshots, layers, regime, history_by_tf, 24, usable_memory,
             )
-            self.state["signature_cache"] = dict(self._memory_meta)
+            meta = dict(self._memory_meta)
+            if not deep_history_ready:
+                meta.update({
+                    "status": "WAITING_FOR_DEEP_HISTORY",
+                    "minimum_anchor_bars": _DEEP_CACHE_MIN_BARS,
+                    "current_anchor_bars": len(anchor_rows),
+                })
+            self.state["signature_cache"] = meta
             self._last_key = key
             self._last_at = time.monotonic()
             return self.state
