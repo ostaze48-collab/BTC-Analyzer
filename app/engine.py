@@ -45,7 +45,10 @@ class TradingEngine:
         await self.market.stop()
 
     def _build_snapshots(self) -> dict[str, dict[str, Any]]:
-        return {interval: enriched_snapshot(self.market.get_closed(interval)) for interval in self.market.candles}
+        return {
+            interval: enriched_snapshot(self.market.get_closed(interval, limit=1800 if interval == "1d" else 500))
+            for interval in self.market.candles
+        }
 
     def _features(self, advisory: dict[str, Any] | None = None) -> dict[str, Any]:
         return feature_vector(
@@ -76,7 +79,6 @@ class TradingEngine:
             return
         async with self._analysis_lock:
             self.snapshots = self._build_snapshots()
-            # Full daily capacity is required for 4-Year SMA/Pi-cycle context.
             self.cycle = cycle_model_context(self.market.get_closed("1d", limit=1800))
             self.network, self.derivatives = await asyncio.gather(
                 self.network_source.refresh_if_due(force=False),
