@@ -8,6 +8,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from .backtest import BacktestEngine
 from .config import settings
 from .db import Database
 from .engine import TradingEngine
@@ -45,6 +46,7 @@ class Hub:
 db = Database()
 hub = Hub()
 engine: TradingEngine | None = None
+backtester = BacktestEngine()
 
 
 @asynccontextmanager
@@ -57,7 +59,7 @@ async def lifespan(app: FastAPI):
     await engine.stop()
 
 
-app = FastAPI(title="BTC AI Trader V1", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="BTC AI Trader V1.1", version="1.1.0", lifespan=lifespan)
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -71,8 +73,9 @@ async def home():
 async def health():
     return {
         "ok": True,
-        "service": "BTC AI Trader V1",
+        "service": "BTC AI Trader V1.1",
         "market_connected": bool(engine and engine.market.connected),
+        "backtest_running": backtester.running,
         "paper_only": True,
     }
 
@@ -94,6 +97,16 @@ async def api_trades(limit: int = 50):
     return db.recent_trades(max(1, min(limit, 200)))
 
 
+@app.post("/api/backtest")
+async def api_backtest(days: int = 3):
+    if days not in (1, 3, 7, 14):
+        raise HTTPException(400, "days must be one of: 1, 3, 7, 14")
+    try:
+        return await backtester.run(days)
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @app.post("/api/reset")
 async def api_reset():
     try:
@@ -108,7 +121,6 @@ async def websocket_endpoint(ws: WebSocket):
     try:
         await ws.send_json({"type": "state", "state": engine.state()})
         while True:
-            # Keeping a read loop lets us notice client disconnects.
             await ws.receive_text()
     except WebSocketDisconnect:
         await hub.disconnect(ws)
