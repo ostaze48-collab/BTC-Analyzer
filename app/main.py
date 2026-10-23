@@ -59,7 +59,7 @@ async def lifespan(app: FastAPI):
     await engine.stop()
 
 
-app = FastAPI(title="BTC AI Trader V1.1", version="1.1.0", lifespan=lifespan)
+app = FastAPI(title="BTC AI Trader V1.6", version="1.6.0", lifespan=lifespan)
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -73,16 +73,23 @@ async def home():
 async def health():
     return {
         "ok": True,
-        "service": "BTC AI Trader V1.1",
+        "service": "BTC AI Trader V1.6",
         "market_connected": bool(engine and engine.market.connected),
         "backtest_running": backtester.running,
         "paper_only": True,
+        "timeframes": list(settings.intervals),
+        "learning_journal": True,
     }
 
 
 @app.get("/api/state")
 async def api_state():
     return engine.state()
+
+
+@app.get("/api/learning")
+async def api_learning():
+    return db.learning_summary()
 
 
 @app.get("/api/candles/{interval}")
