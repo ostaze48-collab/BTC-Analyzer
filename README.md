@@ -2,6 +2,13 @@
 
 نسخة بحث ومحاكاة (Paper Trading) لنظام BTCUSDT متعدد العقول.
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/ostaze48-collab/BTC-Analyzer)
+
+## النشر على Render
+
+المستودع يحتوي على `render.yaml` و`Dockerfile` وHealth Check عند `/health`.
+بعد إنشاء Blueprint لأول مرة، يتم النشر تلقائيًا من فرع `main` فقط بعد نجاح GitHub CI.
+
 ## ما الذي تنفذه V1؟
 
 - بيانات BTCUSDT حية من Binance public market-data endpoints، بدون API key.
@@ -42,6 +49,8 @@ btc_ai_trader_v1/
 ├─ requirements.txt
 ├─ .env.example
 ├─ README.md
+├─ render.yaml
+├─ Dockerfile
 ├─ app/
 │  ├─ config.py
 │  ├─ db.py
