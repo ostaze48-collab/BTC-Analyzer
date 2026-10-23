@@ -17,6 +17,31 @@ class BacktestMechanicsTests(unittest.TestCase):
         closed = bt._manage(trade, candle)
         self.assertEqual(closed["exit_reason"], "STOP_LOSS")
 
+    def test_summary_groups_basic_performance_without_changing_trade_data(self):
+        trades = [
+            {"realized_pnl": 10.0, "r_multiple": 1.0, "mfe_pct": 1.5, "mae_pct": 0.3},
+            {"realized_pnl": -5.0, "r_multiple": -0.5, "mfe_pct": 0.4, "mae_pct": 0.8},
+        ]
+        summary = BacktestEngine.summarize_trades(trades)
+        self.assertEqual(summary["trades"], 2)
+        self.assertEqual(summary["wins"], 1)
+        self.assertEqual(summary["losses"], 1)
+        self.assertEqual(summary["win_rate"], 50.0)
+        self.assertEqual(summary["net_pnl"], 5.0)
+        self.assertEqual(summary["profit_factor"], 2.0)
+        self.assertAlmostEqual(summary["avg_r"], 0.25)
+
+    def test_open_trade_carries_historical_regime(self):
+        p = {
+            "brain": "SWING", "direction": "LONG", "entry": 100.0, "stop_loss": 98.0,
+            "tp1": 102.0, "tp2": 104.0, "tp3": 108.0,
+            "macro_direction": "BULLISH", "macro_conflict": False, "pattern_bias": 0.2,
+        }
+        trade = BacktestEngine._open(p, 1000.0, 10, {"regime": "TREND_UP", "volatility": "NORMAL"})
+        self.assertIsNotNone(trade)
+        self.assertEqual(trade["market_regime"], "TREND_UP")
+        self.assertEqual(trade["regime_volatility"], "NORMAL")
+
 
 if __name__ == "__main__":
     unittest.main()
