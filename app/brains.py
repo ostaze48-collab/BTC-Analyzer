@@ -35,13 +35,7 @@ def _proposal(profile: BrainProfile, snapshots: dict[str, dict[str, Any]]) -> di
     bias = weighted / used if used else 0.0
     anchor = snapshots.get(profile.anchor, {})
     if not anchor:
-        return {
-            "brain": profile.name,
-            "direction": "WAIT",
-            "confidence": 50.0,
-            "bias": 0.0,
-            "reason": "Not enough market history",
-        }
+        return {"brain": profile.name, "direction": "WAIT", "confidence": 50.0, "bias": 0.0, "reason": "Not enough market history"}
 
     if bias > 0.13:
         direction = "LONG"
@@ -51,21 +45,14 @@ def _proposal(profile: BrainProfile, snapshots: dict[str, dict[str, Any]]) -> di
         direction = "WAIT"
 
     confidence = min(92.0, 50.0 + abs(bias) * 44.0)
-    price = float(anchor["close"])
+    live = snapshots.get("1m", {})
+    price = float(live.get("close", anchor["close"]))
     a = max(float(anchor["atr14"]), price * 0.001)
     support = float(anchor["support"])
     resistance = float(anchor["resistance"])
 
     if direction == "WAIT":
-        return {
-            "brain": profile.name,
-            "direction": "WAIT",
-            "confidence": round(confidence, 2),
-            "bias": round(bias, 4),
-            "anchor": profile.anchor,
-            "votes": details,
-            "reason": "No directional edge above threshold",
-        }
+        return {"brain": profile.name, "direction": "WAIT", "confidence": round(confidence, 2), "bias": round(bias, 4), "anchor": profile.anchor, "votes": details, "reason": "No directional edge above threshold"}
 
     if direction == "LONG":
         entry_low = price - 0.18 * a
@@ -96,36 +83,19 @@ def _proposal(profile: BrainProfile, snapshots: dict[str, dict[str, Any]]) -> di
     ev_pct = probability * reward_pct - (1 - probability) * risk_pct - round_trip_cost_pct
 
     return {
-        "brain": profile.name,
-        "direction": direction,
-        "anchor": profile.anchor,
-        "bias": round(bias, 4),
-        "confidence": round(confidence, 2),
+        "brain": profile.name, "direction": direction, "anchor": profile.anchor,
+        "bias": round(bias, 4), "confidence": round(confidence, 2),
         "win_probability": round(probability * 100, 2),
-        "entry_zone": [round(entry_low, 2), round(entry_high, 2)],
-        "entry": round(entry, 2),
-        "stop_loss": round(stop, 2),
-        "tp1": round(tp1, 2),
-        "tp2": round(tp2, 2),
-        "tp3": round(tp3, 2),
-        "risk_pct": round(risk_pct, 4),
-        "rr": round(rr, 3),
-        "ev_pct": round(ev_pct, 4),
-        "volatility_pct": round(float(anchor["volatility_pct"]), 4),
-        "volume_ratio": round(float(anchor["volume_ratio"]), 3),
-        "structure": anchor["structure"],
-        "trend": anchor["trend"],
-        "support": round(support, 2),
-        "resistance": round(resistance, 2),
-        "votes": details,
+        "entry_zone": [round(entry_low, 2), round(entry_high, 2)], "entry": round(entry, 2),
+        "stop_loss": round(stop, 2), "tp1": round(tp1, 2), "tp2": round(tp2, 2), "tp3": round(tp3, 2),
+        "risk_pct": round(risk_pct, 4), "rr": round(rr, 3), "ev_pct": round(ev_pct, 4),
+        "volatility_pct": round(float(anchor["volatility_pct"]), 4), "volume_ratio": round(float(anchor["volume_ratio"]), 3),
+        "structure": anchor["structure"], "trend": anchor["trend"], "support": round(support, 2), "resistance": round(resistance, 2), "votes": details,
     }
 
 
 def analyze_brains(snapshots: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     proposals = [_proposal(profile, snapshots) for profile in PROFILES]
-
-    # Second pass: the brains inform each other. Agreement raises confidence;
-    # disagreement lowers it, but does not force identical decisions.
     directional = [p for p in proposals if p.get("direction") in ("LONG", "SHORT")]
     for p in proposals:
         if p.get("direction") not in ("LONG", "SHORT"):
@@ -150,7 +120,6 @@ def analyze_brains(snapshots: dict[str, dict[str, Any]]) -> list[dict[str, Any]]
         else:
             p["shared_context"] = "SOLO"
 
-        # Recompute EV using the post-consensus probability.
         prob = p["win_probability"] / 100
         reward_pct = abs(p["tp2"] - p["entry"]) / p["entry"] * 100
         risk_pct = p["risk_pct"]
