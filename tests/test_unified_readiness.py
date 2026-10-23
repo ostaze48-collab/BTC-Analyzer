@@ -51,18 +51,21 @@ class UnifiedReadinessTests(unittest.TestCase):
             self._edge(),
             self._incremental(),
         )
-        self.assertNotEqual(r["status"], "PILOT_REVIEW_CANDIDATE")
+        self.assertNotEqual(r["status"], "STRICT_PAPER_REVIEW_CANDIDATE")
         self.assertIn("core_execution_readiness", r["failed_mandatory_gates"])
         self.assertFalse(r["score_is_authorization"])
         self.assertFalse(r["live_execution_enabled"])
 
-    def test_all_mandatory_gates_only_create_review_candidate(self):
+    def test_all_mandatory_gates_only_create_strict_paper_review_candidate(self):
         r = unified_research_readiness(
             self._core(), self._target_pass(), self._edge(), self._incremental()
         )
-        self.assertEqual(r["status"], "PILOT_REVIEW_CANDIDATE")
+        self.assertEqual(r["status"], "STRICT_PAPER_REVIEW_CANDIDATE")
         self.assertEqual(r["failed_mandatory_gates"], [])
+        self.assertTrue(r["strict_paper_review_allowed"])
+        self.assertTrue(r["paper_only"])
         self.assertFalse(r["automatic_real_execution"])
+        self.assertFalse(r["real_execution_eligibility"])
         self.assertFalse(r["live_execution_enabled"])
         self.assertFalse(r["target_auto_apply"])
         self.assertEqual(r["guarantee"], "NONE")
@@ -72,11 +75,12 @@ class UnifiedReadinessTests(unittest.TestCase):
             self._core(live=True), self._target_pass(), self._edge(), self._incremental()
         )
         self.assertIn("real_execution_interlock", r["failed_mandatory_gates"])
-        self.assertNotEqual(r["status"], "PILOT_REVIEW_CANDIDATE")
+        self.assertNotEqual(r["status"], "STRICT_PAPER_REVIEW_CANDIDATE")
+        self.assertFalse(r["strict_paper_review_allowed"])
 
     def test_feature_edge_is_supporting_not_forced_gate(self):
         r = unified_research_readiness(self._core(), self._target_pass(), {}, {})
-        self.assertEqual(r["status"], "PILOT_REVIEW_CANDIDATE")
+        self.assertEqual(r["status"], "STRICT_PAPER_REVIEW_CANDIDATE")
         self.assertFalse(r["feature_research"]["is_mandatory_for_stage"])
         self.assertEqual(len(r["supporting_evidence"]), 2)
 
@@ -89,7 +93,7 @@ class UnifiedReadinessTests(unittest.TestCase):
         )
         self.assertGreater(r["research_score"], 50)
         self.assertFalse(r["score_is_authorization"])
-        self.assertNotEqual(r["status"], "PILOT_REVIEW_CANDIDATE")
+        self.assertNotEqual(r["status"], "STRICT_PAPER_REVIEW_CANDIDATE")
 
 
 if __name__ == "__main__":
