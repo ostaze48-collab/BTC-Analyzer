@@ -141,6 +141,10 @@ class TradingEngine:
         for p in directional:
             self.historical_archive.schedule(str(p.get("brain", "")))
         archives = {brain: self.historical_archive.state(brain) for brain in ("SCALP", "INTRADAY", "SWING")}
+        if not self.candidate_evidence_source.should_refresh(proposals, self.regime, archives, force=force):
+            self.candidate_evidence = self.candidate_evidence_source.state
+            advisory["candidate_evidence_matrix"] = self.candidate_evidence
+            return
         histories = {brain: self._history_for_analogs(brain) for brain in ("SCALP", "INTRADAY", "SWING")}
         self.candidate_evidence = self.candidate_evidence_source.schedule(
             proposals, self.snapshots, self.layers, self.regime, histories, archives,
