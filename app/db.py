@@ -238,6 +238,41 @@ class Database:
             feature_count = int(self.conn.execute("SELECT COUNT(*) AS n FROM trade_features").fetchone()["n"])
             return {"closed_trades": len(rows), "feature_snapshots": feature_count, "brain_regime": matrix}
 
+    def edge_samples(self, limit: int = 5000) -> list[dict[str, Any]]:
+        """Return latest ENTRY feature snapshot for each closed trade, chronologically."""
+        with self._lock:
+            rows = self.conn.execute(
+                """
+                SELECT t.id AS trade_id, t.opened_at, t.brain, t.direction,
+                       COALESCE(t.market_regime, 'UNKNOWN') AS market_regime,
+                       t.realized_pnl, t.risk_budget, f.feature_json
+                FROM trades t
+                JOIN trade_features f ON f.trade_id=t.id AND f.phase='ENTRY'
+                WHERE t.status='CLOSED'
+                  AND f.id=(SELECT MAX(f2.id) FROM trade_features f2 WHERE f2.trade_id=t.id AND f2.phase='ENTRY')
+                ORDER BY t.opened_at ASC, t.id ASC
+                LIMIT ?
+                """,
+                (max(1, min(int(limit), 20000)),),
+            ).fetchall()
+            out: list[dict[str, Any]] = []
+            for row in rows:
+                try:
+                    features = json.loads(row["feature_json"] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    features = {}
+                out.append({
+                    "trade_id": int(row["trade_id"]),
+                    "opened_at": row["opened_at"],
+                    "brain": row["brain"],
+                    "direction": row["direction"],
+                    "market_regime": row["market_regime"],
+                    "realized_pnl": float(row["realized_pnl"] or 0.0),
+                    "risk_budget": float(row["risk_budget"] or 0.0),
+                    "features": features,
+                })
+            return out
+
     def reset(self) -> None:
         with self._lock:
             self.conn.execute("DELETE FROM trade_features")
