@@ -6,6 +6,7 @@ from typing import Any, Awaitable, Callable
 
 from .analysis import enriched_snapshot
 from .brains import analyze_brains, layer_context
+from .config import settings
 from .cycle_models import cycle_model_context
 from .db import Database
 from .derivatives_intelligence import DerivativesIntelligence
