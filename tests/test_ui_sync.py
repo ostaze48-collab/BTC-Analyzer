@@ -8,16 +8,16 @@ class UiSyncTests(unittest.TestCase):
     def test_index_loads_all_current_version_layers(self):
         html = Path("app/static/index.html").read_text(encoding="utf-8")
         self.assertIn(APP_LABEL, html)
-        for script in ("v22.js", "v23.js", "v24.js", "v25.js", "v26.js", "v27.js", "v28.js", "v29.js", "v30.js", "v31.js", "v32.js"):
+        for script in ("v22.js", "v23.js", "v24.js", "v25.js", "v26.js", "v27.js", "v28.js", "v29.js", "v30.js", "v31.js", "v32.js", "v33.js"):
             self.assertIn(f'/static/{script}', html)
 
-    def test_latest_ui_reads_live_shadow_target(self):
-        v32 = Path("app/static/v32.js").read_text(encoding="utf-8")
-        self.assertIn("/api/version", v32)
-        self.assertIn("/api/live-shadow-target", v32)
-        self.assertIn("Live Shadow Target", v32)
-        self.assertEqual(APP_VERSION, "1.22.0")
-        self.assertEqual(APP_LABEL, "V1.22")
+    def test_latest_ui_reads_target_evidence_gate(self):
+        v33 = Path("app/static/v33.js").read_text(encoding="utf-8")
+        self.assertIn("/api/version", v33)
+        self.assertIn("/api/target-evidence-gate", v33)
+        self.assertIn("Target Evidence Consensus Gate", v33)
+        self.assertEqual(APP_VERSION, "1.23.0")
+        self.assertEqual(APP_LABEL, "V1.23")
 
 
 if __name__ == "__main__":
