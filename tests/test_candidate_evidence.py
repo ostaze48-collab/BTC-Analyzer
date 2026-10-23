@@ -45,6 +45,19 @@ class CandidateEvidenceTests(unittest.TestCase):
         self.assertEqual(row["master_weight"], 0.0)
         self.assertLess(row["evidence_score"], 80)
 
+    def test_wait_brain_is_visible_but_gets_no_current_evidence_score(self):
+        p = self.proposal("SWING")
+        p.update({"direction": "WAIT", "risk_gate": "REJECTED", "confidence": 58, "safety_score": 0})
+        row = build_candidate_row(
+            p, self.analog(),
+            {"brain_regime": [{"brain": "SWING", "regime": "RANGE", "trades": 20, "win_rate": 70, "profit_factor": 2.0}]},
+            {"regime": "RANGE"}, {"status": "READY", "bars_loaded": 9000},
+        )
+        self.assertEqual(row["direction"], "WAIT")
+        self.assertEqual(row["evidence_score"], 0.0)
+        self.assertEqual(row["evidence_grade"], "WAIT")
+        self.assertEqual(row["master_weight"], 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
