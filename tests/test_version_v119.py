@@ -4,10 +4,10 @@ from app.target_advisor import build_historical_target_advisor_from_summary
 from app.version import APP_LABEL, APP_VERSION
 
 
-class V119VersionTests(unittest.TestCase):
+class VersionCapabilityTests(unittest.TestCase):
     def test_version(self):
-        self.assertEqual(APP_VERSION, "1.19.0")
-        self.assertEqual(APP_LABEL, "V1.19")
+        self.assertEqual(APP_VERSION, "1.20.0")
+        self.assertEqual(APP_LABEL, "V1.20")
 
     def test_target_advisor_remains_shadow_only(self):
         r = build_historical_target_advisor_from_summary({
