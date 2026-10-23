@@ -1,4 +1,4 @@
-# BTC AI Trader V1.16
+# BTC AI Trader V1.17
 
 منظومة بحث ومحاكاة **Paper Trading فقط** لتحليل BTCUSDT عبر ثلاثة عقول مترابطة: `SCALP` و`INTRADAY` و`SWING`، ثم اختيار صفقة واحدة بواسطة `MASTER`.
 
@@ -16,8 +16,25 @@
 - Incremental Edge Walk-Forward: مقارنة Baseline مقابل Baseline+Feature filter عبر نوافذ لاحقة.
 - Historical Setup Memory: يقارن الصفقة المرشحة بحالات شارت سابقة مشابهة ويقيس ما حدث بعدها بـR multiples وقاعدة STOP_FIRST المحافظة.
 - Analog Edge Validation: تختبر هل بيانات السوابق نفسها تضيف Edge خارج العينة بدل اعتبار التشابه التاريخي دليلًا كافيًا بحد ذاته.
+- **Long Historical Replay Memory**: توسع ذاكرة السوابق حسب العقل المرشح في الخلفية بدل الاكتفاء بـ500 شمعة حديثة.
 - Learning Journal: يحفظ Features عند الدخول والخروج، MFE/MAE، Regime، العقل، والنتيجة.
 - Replay/Backtesting لنفس منطق العقول وإدارة المخاطر.
+
+## الذاكرة التاريخية الطويلة V1.17
+
+لا تقوم المنظومة بتحميل سنوات من كل فريم عند الإقلاع. التحميل **Lazy** ويبدأ فقط عندما يظهر عقل مرشح:
+
+- `SCALP`: تاريخ أعمق لـ5m و15m و1H و4H و1D، مع هدف يصل إلى نحو 45 يومًا على 5m وأربع سنوات على اليومي.
+- `INTRADAY`: يمتد من 15m حتى 1W، مع أشهر للفريمات الصغيرة وسنوات للفريمات الكبيرة.
+- `SWING`: يركز على 4H و1D و1W و1M، ويستهدف عدة سنوات من التاريخ حيث يتوفر.
+
+الأرشيف:
+
+- يُحمّل في الخلفية ولا يوقف تحليل السوق الحي.
+- يُخزن في ذاكرة الخادم مؤقتًا مع TTL، ثم يُعاد تحميله عند الحاجة.
+- يُدمج مع الشموع الحية بدون تكرار timestamps، وتُفضّل الشمعة الحالية عند التعارض.
+- يوسع عينة Historical Analog فقط، ووزنه في MASTER يظل `0`.
+- إذا فشل مصدر أو فريم، يستمر النظام بالحالة `PARTIAL` بدل تعطيل التداول التجريبي.
 
 ## إدارة الصفقة والمخاطرة
 
@@ -43,7 +60,7 @@
 7. Readiness Gate.
 8. فقط بعد ذلك يمكن بحث الانتقال الحقيقي يدويًا.
 
-Historical Analog وNetwork وDerivatives لا يغيرون MASTER حاليًا (`weight = 0`). حتى إذا ظهرت Historical Analog كمرشح مفيد في Walk-Forward، تبقى بوزن صفر إلى أن تجتاز Full-engine OOS replay لاحقًا.
+Historical Analog وLong Historical Memory وNetwork وDerivatives لا يغيرون MASTER حاليًا (`weight = 0`). حتى إذا ظهرت Historical Analog كمرشح مفيد في Walk-Forward، تبقى بوزن صفر إلى أن تجتاز Full-engine OOS replay لاحقًا.
 
 ## كيف تُقرأ الصفقة على الشارت السابق
 
@@ -56,7 +73,7 @@ Historical Analog وNetwork وDerivatives لا يغيرون MASTER حاليًا 
 - نسبة وصول الحالات إلى 1R و2R و3R و4R و5R.
 - أمثلة زمنية من الحالات السابقة.
 
-V1.16 تضيف اختبارًا مستقلًا لهذه المعلومات داخل Edge Lab وIncremental Walk-Forward لتحديد هل كانت هذه البيانات السابقة مفيدة فعلًا أم مجرد ارتباط تاريخي.
+V1.16 تختبر هل هذه المعلومات مفيدة فعلاً عبر Edge Lab وIncremental Walk-Forward، وV1.17 توسع عمق التاريخ الذي تُبنى عليه هذه المقارنات.
 
 ## واجهة الهاتف
 
@@ -71,6 +88,7 @@ V1.16 تضيف اختبارًا مستقلًا لهذه المعلومات دا�
 - Feature Edge Lab وIncremental Walk-Forward.
 - Historical Setup Memory ونتائج الحالات السابقة المشابهة.
 - Analog Edge Validation: هل السوابق أثبتت قيمة إضافية أم لا.
+- Long Historical Replay Memory: حالة التحميل وعمق كل فريم وعدد الشموع لكل عقل.
 - Backtest وLearning Journal وسجل الصفقات.
 
 ## التشغيل محليًا
@@ -109,7 +127,7 @@ http://127.0.0.1:8000
 GitHub Actions يتحقق من:
 
 - Python compile.
-- Syntax لكل ملفات JavaScript الحالية حتى `v26.js`.
+- Syntax لكل ملفات JavaScript الحالية حتى `v27.js`.
 - Unit Tests.
 - تشغيل التطبيق و`/health`.
 - مزامنة رقم الإصدار وواجهات الهاتف مع ملفات التطوير الحديثة.
@@ -134,6 +152,6 @@ SOFT_PAUSE_DRAWDOWN=0.23
 
 ## مبدأ المشروع
 
-`Market Data → Multi-Timeframe Analysis → 3 Brains → MASTER → Adaptive Risk → One Trade → Historical Evidence → Analog Validation → Journal → Walk-Forward Learning → Readiness Gate`
+`Market Data → Multi-Timeframe Analysis → 3 Brains → MASTER → Adaptive Risk → One Trade → Long Historical Evidence → Analog Validation → Journal → Walk-Forward Learning → Readiness Gate`
 
 الهدف ليس زيادة عدد المؤشرات، بل استخدام Pool واسع ثم الاحتفاظ فقط بما يثبت Edge إضافيًا ومستقرًا خارج العينة.
