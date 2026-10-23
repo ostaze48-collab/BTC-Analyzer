@@ -80,7 +80,8 @@ def _target_r(p: dict[str, Any], regime: dict[str, Any] | None = None) -> float:
         target = min(target, 3.0)
 
     macro = p.get("macro_direction")
-    if macro in ("BULLISH", "BEARISH") and p.get("direction") not in (None, macro.replace("BULLISH", "LONG").replace("BEARISH", "SHORT")):
+    expected_dir = "LONG" if macro == "BULLISH" else ("SHORT" if macro == "BEARISH" else None)
+    if expected_dir and p.get("direction") != expected_dir:
         target = min(target, 2.0)
 
     return max(1.0, min(5.0, target))
@@ -104,7 +105,7 @@ def build_risk_plan(
     account: dict[str, Any],
     regime: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Return a paper-trading plan. Leverage only changes exposure/margin, not the stop-risk budget."""
+    """Return a paper-trading plan with adaptive size, minimal leverage and fee-aware stop risk."""
     start = float(account.get("starting_capital", 0.0) or 0.0)
     capital = float(account.get("capital", 0.0) or 0.0)
     entry = float(p.get("entry", 0.0) or 0.0)
@@ -123,30 +124,32 @@ def build_risk_plan(
             "hard_floor": round(hard_floor, 2),
         }
 
-    risk_per_btc = abs(entry - stop)
-    if risk_per_btc <= 0:
+    price_risk_per_btc = abs(entry - stop)
+    if price_risk_per_btc <= 0:
         return {"allowed": False, "reason": "Invalid stop distance"}
 
     risk_fraction = _base_risk_fraction(p) * _drawdown_multiplier(dd)
     desired_risk = capital * risk_fraction
-    # Reserve a small buffer before the hard 25% floor.
     floor_buffer = max(start * 0.0025, 0.01)
     max_allowed_risk = max(0.0, remaining_loss_capacity - floor_buffer)
     risk_budget = min(desired_risk, max_allowed_risk)
     if risk_budget <= 0:
         return {"allowed": False, "reason": "NO_RISK_CAPACITY_BEFORE_HARD_FLOOR"}
 
-    stop_fraction = risk_per_btc / entry
-    desired_notional = risk_budget / stop_fraction
-    max_notional = capital * settings.max_paper_leverage
-    notional = min(desired_notional, max_notional)
-    quantity = notional / entry
-    actual_risk = quantity * risk_per_btc
+    # Position size is based on loss at stop PLUS estimated entry/exit fees.
+    fee_per_btc_at_stop = (entry + stop) * settings.paper_fee_rate
+    total_loss_per_btc_at_stop = price_risk_per_btc + fee_per_btc_at_stop
+    desired_qty = risk_budget / total_loss_per_btc_at_stop
+    max_qty = (capital * settings.max_paper_leverage) / entry
+    quantity = min(desired_qty, max_qty)
+    notional = quantity * entry
+    actual_risk = quantity * total_loss_per_btc_at_stop
 
-    # Minimal whole-number leverage needed for the selected notional.
     leverage = int(max(1, min(settings.max_paper_leverage, math.ceil(notional / capital))))
     margin_used = notional / leverage
     margin_pct = margin_used / capital * 100.0
+    price_stop_fraction = price_risk_per_btc / entry
+    fee_risk_fraction = fee_per_btc_at_stop / entry
 
     target_r = _target_r(p, regime)
     tp1, tp2, tp3 = _adaptive_targets(entry, stop, str(p.get("direction")), target_r)
@@ -168,7 +171,8 @@ def build_risk_plan(
         "notional": round(notional, 4),
         "margin_used": round(margin_used, 4),
         "margin_pct": round(margin_pct, 3),
-        "stop_distance_pct": round(stop_fraction * 100, 4),
+        "stop_distance_pct": round(price_stop_fraction * 100, 4),
+        "fee_risk_pct_of_notional": round(fee_risk_fraction * 100, 4),
         "target_r": target_r,
         "tp1": round(tp1, 2),
         "tp2": round(tp2, 2),
