@@ -71,6 +71,7 @@ def feature_vector(
     regime: dict[str, Any],
     cycle: dict[str, Any] | None = None,
     network: dict[str, Any] | None = None,
+    derivatives: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Auditable learning vector containing summaries + hidden background pool."""
     timeframes: dict[str, Any] = {}
@@ -101,11 +102,12 @@ def feature_vector(
 
     winner = master.get("winner") or {}
     return {
-        "schema": "learning_vector_v3",
+        "schema": "learning_vector_v4",
         "regime": regime,
         "layers": layers,
         "cycle_models": cycle or {},
         "network_intelligence": network or {},
+        "derivatives_intelligence": derivatives or {},
         "winner": {
             "brain": winner.get("brain"), "direction": winner.get("direction"),
             "confidence": winner.get("confidence"), "safety": winner.get("safety_score"),
