@@ -8,6 +8,7 @@ from .analysis import enriched_snapshot
 from .brains import analyze_brains, layer_context
 from .cycle_models import cycle_model_context
 from .db import Database
+from .derivatives_intelligence import DerivativesIntelligence
 from .market import MarketData
 from .master import select_trade
 from .network_intelligence import NetworkIntelligence
@@ -25,6 +26,8 @@ class TradingEngine:
         self.market = MarketData(self.on_market_event)
         self.network_source = NetworkIntelligence(ttl_seconds=300)
         self.network: dict[str, Any] = self.network_source.state
+        self.derivatives_source = DerivativesIntelligence(ttl_seconds=60)
+        self.derivatives: dict[str, Any] = self.derivatives_source.state
         self.snapshots: dict[str, dict[str, Any]] = {}
         self.layers: dict[str, Any] = {}
         self.cycle: dict[str, Any] = {"available": False, "models": {}, "bias": 0.0, "strength": 0.0}
@@ -45,7 +48,10 @@ class TradingEngine:
         return {interval: enriched_snapshot(self.market.get_closed(interval)) for interval in self.market.candles}
 
     def _features(self, advisory: dict[str, Any] | None = None) -> dict[str, Any]:
-        return feature_vector(self.snapshots, self.layers, advisory or self.master, self.regime, self.cycle, self.network)
+        return feature_vector(
+            self.snapshots, self.layers, advisory or self.master, self.regime,
+            self.cycle, self.network, self.derivatives,
+        )
 
     def _public_snapshots(self) -> dict[str, dict[str, Any]]:
         return {
@@ -70,19 +76,25 @@ class TradingEngine:
             return
         async with self._analysis_lock:
             self.snapshots = self._build_snapshots()
-            self.cycle = cycle_model_context(self.market.get_closed("1d", limit=500))
-            self.network = await self.network_source.refresh_if_due(force=False)
+            # Full daily capacity is required for 4-Year SMA/Pi-cycle context.
+            self.cycle = cycle_model_context(self.market.get_closed("1d", limit=1800))
+            self.network, self.derivatives = await asyncio.gather(
+                self.network_source.refresh_if_due(force=False),
+                self.derivatives_source.refresh_if_due(force=False),
+            )
             self.layers = layer_context(self.snapshots, self.cycle)
             self.regime = classify_market_regime(self.snapshots, self.layers)
 
-            # Network intelligence deliberately has ZERO weight in V1.10. It is
-            # logged with outcomes first and may receive weight only after OOS proof.
+            # Network and derivatives intelligence deliberately have ZERO trading
+            # weight. They are logged with outcomes first and can only be promoted
+            # after separate out-of-sample incremental-edge validation.
             proposals = analyze_brains(self.snapshots, self.cycle)
             advisory = select_trade(proposals)
             advisory["timeframe_layers"] = self.layers
             advisory["market_regime"] = self.regime
             advisory["cycle_models"] = self.cycle
             advisory["network_intelligence"] = self.network
+            advisory["derivatives_intelligence"] = self.derivatives
 
             active = self.trade_manager.active
             price = self.market.last_price
@@ -104,6 +116,7 @@ class TradingEngine:
                     advisory["market_regime"] = self.regime
                     advisory["cycle_models"] = self.cycle
                     advisory["network_intelligence"] = self.network
+                    advisory["derivatives_intelligence"] = self.derivatives
                     active = None
 
             if not active and advisory["action"] in ("LONG", "SHORT") and advisory["winner"]:
@@ -138,7 +151,8 @@ class TradingEngine:
             "symbol": "BTCUSDT", "price": price, "connected": self.market.connected,
             "last_analysis_at": self.last_analysis_at, "snapshots": self._public_snapshots(),
             "timeframe_layers": self.layers, "market_regime": self.regime,
-            "cycle_models": self.cycle, "network_intelligence": self.network, "master": self.master,
+            "cycle_models": self.cycle, "network_intelligence": self.network,
+            "derivatives_intelligence": self.derivatives, "master": self.master,
             "active_trade": self.trade_manager.state(price), "stats": self.db.stats(),
             "learning": self.learning_cache,
             "feature_engine": {
@@ -150,7 +164,8 @@ class TradingEngine:
                 "risk_per_trade_pct": 0.75, "paper_fee_pct_each_side": 0.10,
                 "one_trade_only": True, "paper_only": True, "analysis_uses_closed_candles": True,
                 "intervals": list(self.market.candles.keys()), "pattern_engine": True, "learning_journal": True,
-                "cycle_models": True, "network_intelligence": "SHADOW_ONLY", "analysis_horizon": "1m→1y",
+                "cycle_models": True, "network_intelligence": "SHADOW_ONLY",
+                "derivatives_intelligence": "SHADOW_ONLY", "analysis_horizon": "1m→1y",
             },
         }
 
