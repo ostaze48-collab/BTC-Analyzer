@@ -51,4 +51,9 @@
   }
   const btn=document.getElementById('refreshEdgeLab');if(btn)btn.addEventListener('click',refresh);
   refresh();setInterval(refresh,30000);
+
+  const next=document.createElement('script');
+  next.src='/static/v24.js';
+  next.defer=true;
+  document.body.appendChild(next);
 })();
