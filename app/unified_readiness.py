@@ -104,10 +104,10 @@ def unified_research_readiness(
     interlock_ok = mandatory_gates[2]["passed"]
 
     if all_mandatory:
-        status = "PILOT_REVIEW_CANDIDATE"
+        status = "STRICT_PAPER_REVIEW_CANDIDATE"
         message = (
-            "Mandatory research gates passed. This permits only a separate review of a tiny, hard-capped paper/live-pilot design; "
-            "nothing is enabled automatically."
+            "Mandatory research gates passed. The only next stage allowed by V1.24 is a separately reviewed, hard-capped PAPER pilot. "
+            "Real-money execution remains explicitly ineligible and disabled."
         )
     elif core_status in {"SHADOW_READY", "LIVE_CANDIDATE"} and target_pass and interlock_ok:
         status = "SHADOW_VALIDATED"
@@ -163,9 +163,12 @@ def unified_research_readiness(
             "incremental_oos_evidence": feature_oos_evidence,
             "is_mandatory_for_stage": False,
         },
+        "paper_only": True,
+        "strict_paper_review_allowed": all_mandatory,
         "automatic_real_execution": False,
+        "real_execution_eligibility": False,
         "live_execution_enabled": False,
         "target_auto_apply": False,
         "guarantee": "NONE",
-        "policy": "No score or stage starts real trading. PILOT_REVIEW_CANDIDATE only permits a separate explicit review of a tiny-capital, hard-capped pilot with kill-switches; real execution remains OFF in this build.",
+        "policy": "No V1.24 score or stage authorizes real-money trading. STRICT_PAPER_REVIEW_CANDIDATE only permits a separate strict PAPER validation stage with the one-trade lock, fee/slippage assumptions and kill-switches unchanged.",
     }
