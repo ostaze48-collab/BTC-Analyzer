@@ -32,20 +32,27 @@ def _brain_regime_history(learning: dict[str, Any], brain: str, regime: str) -> 
 def _shadow_score(proposal: dict[str, Any], analog: dict[str, Any], history: dict[str, Any]) -> dict[str, Any]:
     if proposal.get("direction") not in ("LONG", "SHORT"):
         return {"score": 0.0, "grade": "WAIT", "master_weight": 0.0}
-    components: list[tuple[float, float]] = []
+
+    evidence: list[tuple[float, float]] = []
     if analog.get("status") == "READY":
         matches = max(0, int(analog.get("matches", 0) or 0)); sample = min(1.0, matches / 18.0)
         hit2 = _num(analog.get("hit_2r_pct")); hit3 = _num(analog.get("hit_3r_pct"))
         stop = _num(analog.get("stop_before_1r_pct")); similarity = _num(analog.get("avg_similarity_pct"))
         raw = hit2 * 0.35 + hit3 * 0.25 + (100.0 - stop) * 0.25 + similarity * 0.15
-        components.append((max(0.0, min(100.0, 50.0 + (raw - 50.0) * sample)), 0.55))
+        evidence.append((max(0.0, min(100.0, 50.0 + (raw - 50.0) * sample)), 0.70))
+
     if history.get("status") in ("READY", "SMALL_SAMPLE") and history.get("trades", 0):
         trades = int(history.get("trades", 0)); sample = min(1.0, trades / 30.0); pf = min(3.0, _num(history.get("profit_factor")))
         raw = _num(history.get("win_rate")) * 0.60 + min(100.0, pf / 2.0 * 100.0) * 0.40
-        components.append((max(0.0, min(100.0, 50.0 + (raw - 50.0) * sample)), 0.20))
-    safety = _num(proposal.get("safety_score")); confidence = _num(proposal.get("confidence"))
-    components.append((max(0.0, min(100.0, safety * 0.65 + confidence * 0.35)), 0.25))
-    score = sum(v * w for v, w in components) / sum(w for _, w in components) if components else 0.0
+        evidence.append((max(0.0, min(100.0, 50.0 + (raw - 50.0) * sample)), 0.30))
+
+    # This is a HISTORICAL evidence score. Current Safety/Confidence are shown
+    # alongside it in the UI, but cannot manufacture a high historical score when
+    # no historical sample exists.
+    if not evidence:
+        return {"score": 0.0, "grade": "UNPROVEN", "master_weight": 0.0}
+
+    score = sum(v * w for v, w in evidence) / sum(w for _, w in evidence)
     grade = "A" if score >= 78 else ("B" if score >= 66 else ("C" if score >= 54 else "D"))
     return {"score": round(score, 2), "grade": grade, "master_weight": 0.0}
 
