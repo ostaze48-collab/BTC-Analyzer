@@ -47,6 +47,7 @@ jobs:
           node --check app/static/v23.js
           node --check app/static/v24.js
           node --check app/static/v25.js
+          node --check app/static/v26.js
 
       - name: Unit tests
         run: python -m unittest discover -s tests -v
