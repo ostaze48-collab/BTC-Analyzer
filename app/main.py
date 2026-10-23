@@ -9,13 +9,13 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from .analog_validation import summarize_analog_validation
 from .backtest import BacktestEngine
 from .config import settings
 from .cycle_walkforward import CycleWalkForward
 from .db import Database
 from .edge_lab import analyze_feature_edge
 from .engine import TradingEngine
-from .historical_validation import validate_historical_analogs
 from .incremental_edge import incremental_walkforward
 from .readiness import readiness_report
 from .version import APP_LABEL, APP_NAME, APP_VERSION
@@ -98,7 +98,7 @@ async def health():
         "incremental_walkforward": True,
         "historical_analogs": True,
         "historical_analogs_mode": "SHADOW_ONLY",
-        "historical_analogs_oos_validator": True,
+        "analog_edge_validation": True,
         "feature_auto_promotion": False,
         "cycle_models": True,
         "readiness_gate": True,
@@ -156,15 +156,17 @@ async def api_incremental_edge(limit: int = 5000, max_features: int = 250):
     return incremental_walkforward(samples, max_features=max(10, min(max_features, 1000)))
 
 
+@app.get("/api/analog-validation")
+async def api_analog_validation(limit: int = 5000):
+    samples = db.edge_samples(max(1, min(limit, 20000)))
+    edge = analyze_feature_edge(samples)
+    incremental = incremental_walkforward(samples, max_features=500)
+    return summarize_analog_validation(edge, incremental)
+
+
 @app.get("/api/historical-analogs")
 async def api_historical_analogs():
     return engine.historical_analogs
-
-
-@app.get("/api/historical-validation")
-async def api_historical_validation(limit: int = 5000):
-    samples = db.edge_samples(max(1, min(limit, 20000)))
-    return validate_historical_analogs(samples)
 
 
 @app.get("/api/network")
