@@ -11,6 +11,7 @@ from .cycle_models import cycle_model_context
 from .db import Database
 from .derivatives_intelligence import DerivativesIntelligence
 from .historical_analogs import HistoricalAnalogEngine
+from .historical_archive import HistoricalArchive
 from .market import MarketData
 from .master import select_trade
 from .network_intelligence import NetworkIntelligence
@@ -32,6 +33,9 @@ class TradingEngine:
         self.derivatives: dict[str, Any] = self.derivatives_source.state
         self.analog_source = HistoricalAnalogEngine(ttl_seconds=300)
         self.historical_analogs: dict[str, Any] = self.analog_source.state
+        self.historical_archive = HistoricalArchive(ttl_seconds=21_600)
+        self.archive_state: dict[str, Any] = self.historical_archive.state()
+        self._last_archive_token: tuple[Any, ...] | None = None
         self.snapshots: dict[str, dict[str, Any]] = {}
         self.layers: dict[str, Any] = {}
         self.cycle: dict[str, Any] = {"available": False, "models": {}, "bias": 0.0, "strength": 0.0}
@@ -46,7 +50,7 @@ class TradingEngine:
         await self.analyze(force=True)
 
     async def stop(self) -> None:
-        await self.market.stop()
+        await asyncio.gather(self.market.stop(), self.historical_archive.stop())
 
     def _build_snapshots(self) -> dict[str, dict[str, Any]]:
         return {
@@ -54,11 +58,28 @@ class TradingEngine:
             for interval in self.market.candles
         }
 
-    def _history_for_analogs(self) -> dict[str, list[dict[str, Any]]]:
-        return {
+    @staticmethod
+    def _merge_history(*series: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        merged: dict[int, dict[str, Any]] = {}
+        for rows in series:
+            for row in rows:
+                if not row.get("closed", True):
+                    continue
+                merged[int(row.get("time", 0))] = row
+        return [merged[k] for k in sorted(merged)]
+
+    def _history_for_analogs(self, brain: str | None = None) -> dict[str, list[dict[str, Any]]]:
+        current = {
             interval: self.market.get_closed(interval, limit=1800 if interval == "1d" else 500)
             for interval in self.market.candles
         }
+        archive = self.historical_archive.history(brain)
+        if not archive:
+            return current
+        out = dict(current)
+        for interval, rows in archive.items():
+            out[interval] = self._merge_history(rows, current.get(interval, []))
+        return out
 
     def _features(self, advisory: dict[str, Any] | None = None) -> dict[str, Any]:
         payload = feature_vector(
@@ -66,7 +87,8 @@ class TradingEngine:
             self.cycle, self.network, self.derivatives,
         )
         payload["historical_analogs"] = self.historical_analogs
-        payload["schema"] = "learning_vector_v5"
+        payload["historical_archive"] = self.archive_state
+        payload["schema"] = "learning_vector_v6"
         return payload
 
     def _public_snapshots(self) -> dict[str, dict[str, Any]]:
@@ -89,10 +111,22 @@ class TradingEngine:
         self.learning_cache = self.db.learning_summary()
 
     async def _refresh_analogs(self, advisory: dict[str, Any], force: bool = False) -> None:
-        self.historical_analogs = await self.analog_source.refresh(
-            advisory.get("winner"), self.snapshots, self.layers, self.regime,
-            self._history_for_analogs(), force=force,
+        winner = advisory.get("winner") or {}
+        brain = str(winner.get("brain", ""))
+        self.archive_state = self.historical_archive.schedule(brain)
+        token = (
+            brain, self.archive_state.get("status"),
+            int(self.archive_state.get("bars_loaded", 0) or 0),
+            int(self.archive_state.get("loaded_timeframes", 0) or 0),
         )
+        archive_changed = token != self._last_archive_token and self.archive_state.get("status") in ("READY", "PARTIAL")
+        self._last_archive_token = token
+
+        self.historical_analogs = await self.analog_source.refresh(
+            winner, self.snapshots, self.layers, self.regime,
+            self._history_for_analogs(brain), force=(force or archive_changed),
+        )
+        self.historical_analogs["archive"] = self.archive_state
         advisory["historical_analogs"] = self.historical_analogs
 
     async def analyze(self, force: bool = False) -> None:
@@ -139,9 +173,9 @@ class TradingEngine:
                     advisory["derivatives_intelligence"] = self.derivatives
                     active = None
 
-            # Historical analogs are a shadow evidence layer. They are computed
-            # from prior chart bars only and receive zero MASTER weight until a
-            # separate incremental out-of-sample validation proves added value.
+            # Historical analogs are a shadow evidence layer. Long history loads
+            # lazily in the background for the relevant brain; current analysis
+            # never blocks waiting for the archive.
             await self._refresh_analogs(advisory, force=force)
 
             if not active and advisory["action"] in ("LONG", "SHORT") and advisory["winner"]:
@@ -181,6 +215,7 @@ class TradingEngine:
             "timeframe_layers": self.layers, "market_regime": self.regime,
             "cycle_models": self.cycle, "network_intelligence": self.network,
             "derivatives_intelligence": self.derivatives, "historical_analogs": self.historical_analogs,
+            "historical_archive": self.archive_state,
             "master": self.master,
             "active_trade": self.trade_manager.state(price), "stats": stats,
             "learning": self.learning_cache,
@@ -206,7 +241,7 @@ class TradingEngine:
                 "intervals": list(self.market.candles.keys()), "pattern_engine": True, "learning_journal": True,
                 "cycle_models": True, "network_intelligence": "SHADOW_ONLY",
                 "derivatives_intelligence": "SHADOW_ONLY", "historical_analogs": "SHADOW_ONLY",
-                "analysis_horizon": "1m→1y",
+                "historical_archive": "LAZY_SHADOW_ONLY", "analysis_horizon": "1m→1y",
             },
         }
 
