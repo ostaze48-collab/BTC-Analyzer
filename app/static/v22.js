@@ -1,8 +1,4 @@
 (() => {
-  document.title = "BTC AI Trader V1.12";
-  const version = document.querySelector("h1 span");
-  if(version) version.textContent = "V1.12";
-
   const style=document.createElement("style");
   style.textContent=`
     .risk-strip{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:10px}
@@ -52,9 +48,4 @@
     try{const res=await fetch('/api/state'),state=await res.json();render(state);}catch(e){console.warn('Risk panel refresh failed',e);}
   }
   refresh();setInterval(refresh,5000);
-
-  const next=document.createElement('script');
-  next.src='/static/v23.js';
-  next.defer=true;
-  document.body.appendChild(next);
 })();
