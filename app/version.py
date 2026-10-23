@@ -1,0 +1,3 @@
+APP_VERSION = "1.15.0"
+APP_LABEL = "V1.15"
+APP_NAME = "BTC AI Trader"
