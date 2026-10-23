@@ -5,14 +5,14 @@ from app.version import APP_LABEL, APP_VERSION
 
 
 class VersionHealthSyncTests(unittest.IsolatedAsyncioTestCase):
-    async def test_health_matches_version_and_long_memory_capability(self):
+    async def test_health_matches_version_and_signature_cache_capability(self):
         data = await health()
         self.assertEqual(data["version"], APP_VERSION)
         self.assertEqual(data["version_label"], APP_LABEL)
         self.assertTrue(data["historical_analogs"])
-        self.assertTrue(data["analog_edge_validation"])
         self.assertTrue(data["long_historical_memory"])
-        self.assertEqual(data["historical_archive_mode"], "LAZY_SHADOW_ONLY")
+        self.assertTrue(data["historical_signature_cache"])
+        self.assertEqual(data["signature_target_candidates"], 720)
         self.assertFalse(data["real_execution_enabled"])
 
 
