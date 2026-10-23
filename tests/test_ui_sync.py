@@ -16,7 +16,7 @@ class UiSyncTests(unittest.TestCase):
         self.assertIn("/api/version", v35)
         self.assertIn("/api/strict-paper-review", v35)
         self.assertIn("Strict Paper Review Protocol", v35)
-        self.assertIn("not OOS", v35)
+        self.assertIn("ليس OOS مستقل", v35)
         self.assertEqual(APP_VERSION, "1.25.0")
         self.assertEqual(APP_LABEL, "V1.25")
 
