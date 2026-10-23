@@ -7,7 +7,7 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>BTC AI Trader V1.3</title>
+  <title>BTC AI Trader V1.4</title>
   <link rel="stylesheet" href="/static/styles.css" />
   <link rel="stylesheet" href="/static/backtest.css" />
   <link rel="stylesheet" href="/static/structure.css" />
@@ -15,8 +15,8 @@
 <body>
   <header class="app-header">
     <div class="brand">
-      <h1>BTC AI TRADER <span>V1.3</span></h1>
-      <p>3 عقول مترابطة · MASTER · صفقة واحدة</p>
+      <h1>BTC AI TRADER <span>V1.4</span></h1>
+      <p>3 عقول مترابطة · 14 فريم · MASTER · صفقة واحدة</p>
     </div>
     <div class="pricebox">
       <div id="conn" class="pill">CONNECTING</div>
@@ -34,7 +34,6 @@
         <div id="winner"></div>
         <div id="masterExplain" class="master-explain"></div>
       </article>
-
       <article class="card capital-card">
         <div class="card-title">رأس المال التجريبي</div>
         <div class="metric-row"><span>البداية</span><b id="startCapital">$1,000</b></div>
@@ -42,13 +41,12 @@
         <div class="metric-row"><span>صافي P/L</span><b id="netPnl">—</b></div>
         <div class="metric-row"><span>Win rate</span><b id="winRate">—</b></div>
       </article>
-
       <article class="card lock-card">
         <div class="card-title">قفل التنفيذ</div>
         <div id="tradeLock" class="lock open">🔓 لا توجد صفقة مفتوحة</div>
         <div class="metric-row"><span>المخاطرة/صفقة</span><b>0.75%</b></div>
         <div class="metric-row"><span>أقصى صفقة نشطة</span><b>1</b></div>
-        <div class="metric-row"><span>الوضع</span><b>PAPER ONLY</b></div>
+        <div class="metric-row"><span>التحليل</span><b>Closed candles</b></div>
       </article>
     </section>
 
@@ -67,18 +65,15 @@
     </section>
 
     <section id="brainsSection" class="card brain-card section-brains">
-      <div class="section-title-row">
-        <div class="card-title">العقول الثلاثة</div>
-        <small class="mobile-hint">اسحب للمقارنة ←</small>
-      </div>
+      <div class="section-title-row"><div class="card-title">العقول الثلاثة</div><small class="mobile-hint">اسحب للمقارنة ←</small></div>
       <div id="brains" class="brains"></div>
     </section>
 
     <section id="marketContextSection" class="card context-card section-context">
       <div class="section-title-row">
-        <div class="card-title">السوق عبر الفريمات</div>
-        <small class="muted">اتجاه · هيكل · RSI · تقلب</small>
+        <div><div class="card-title">قراءة السوق عبر جميع الفريمات</div><small class="muted">من 1 دقيقة حتى الأسبوعي · القرار يستخدم الفريمات تلقائيًا</small></div>
       </div>
+      <div id="timeframeLayers" class="timeframe-layers"></div>
       <div id="marketContext" class="market-context"></div>
     </section>
 
@@ -86,8 +81,11 @@
       <div class="chart-head">
         <div class="card-title">الشارت الذكي</div>
         <div id="tfButtons" class="tf-buttons" aria-label="Timeframes">
-          <button data-tf="1m">1m</button><button class="active" data-tf="5m">5m</button>
-          <button data-tf="15m">15m</button><button data-tf="1h">1H</button><button data-tf="4h">4H</button>
+          <button data-tf="1m">1m</button><button data-tf="3m">3m</button><button class="active" data-tf="5m">5m</button>
+          <button data-tf="15m">15m</button><button data-tf="30m">30m</button>
+          <button data-tf="1h">1H</button><button data-tf="2h">2H</button><button data-tf="4h">4H</button>
+          <button data-tf="6h">6H</button><button data-tf="8h">8H</button><button data-tf="12h">12H</button>
+          <button data-tf="1d">1D</button><button data-tf="3d">3D</button><button data-tf="1w">1W</button>
         </div>
       </div>
       <div class="chart-controls" aria-label="Chart overlays">
@@ -97,10 +95,10 @@
         <button class="overlay-toggle active" data-overlay="trade">Entry / SL / TP</button>
         <button id="structureToggle" class="overlay-toggle active" type="button">Swing / BOS / CHoCH</button>
         <button id="zonesToggle" class="overlay-toggle active" type="button">FVG / Order Block</button>
+        <button id="liquidityToggle" class="overlay-toggle active" type="button">Liquidity / Sweeps</button>
+        <button id="channelToggle" class="overlay-toggle active" type="button">Trendlines / Channel</button>
       </div>
-      <div id="structurePanel" class="structure-panel">
-        <div class="muted">بانتظار بيانات Market Structure...</div>
-      </div>
+      <div id="structurePanel" class="structure-panel"><div class="muted">بانتظار بيانات Market Structure...</div></div>
       <div id="chart"></div>
       <div class="chart-legend">
         <span class="legend ema20">EMA20</span><span class="legend ema50">EMA50</span><span class="legend ema200">EMA200</span><span class="legend vwap">VWAP</span>
@@ -110,10 +108,7 @@
 
     <section id="backtestSection" class="card backtest-card section-backtest">
       <div class="backtest-head">
-        <div>
-          <div class="card-title">Replay / Backtesting</div>
-          <div class="muted">اختبر نفس العقول الثلاثة والـMaster على بيانات BTC التاريخية.</div>
-        </div>
+        <div><div class="card-title">Replay / Backtesting</div><div class="muted">اختبار نفس العقول والـMaster مع Micro + Intraday + Swing + Macro.</div></div>
         <div class="backtest-controls">
           <select id="backtestDays" aria-label="مدة الاختبار"><option value="1">1 يوم</option><option value="3" selected>3 أيام</option><option value="7">7 أيام</option><option value="14">14 يوم</option></select>
           <button id="runBacktest" class="primary">▶ تشغيل</button>
@@ -125,12 +120,10 @@
 
     <section id="tradesSection" class="card section-trades">
       <div class="card-title">آخر الصفقات</div>
-      <div class="table-wrap">
-        <table><thead><tr><th>#</th><th>العقل</th><th>الاتجاه</th><th>الدخول</th><th>الخروج</th><th>P/L</th><th>السبب</th></tr></thead><tbody id="tradesBody"></tbody></table>
-      </div>
+      <div class="table-wrap"><table><thead><tr><th>#</th><th>العقل</th><th>الاتجاه</th><th>الدخول</th><th>الخروج</th><th>P/L</th><th>السبب</th></tr></thead><tbody id="tradesBody"></tbody></table></div>
     </section>
 
-    <div class="notice">V1.3 للمحاكاة والبحث فقط · Market Structure وOrder Block أدوات بحثية وليست ضمانًا للتداول</div>
+    <div class="notice">V1.4 للمحاكاة والبحث فقط · التحليل يستخدم الشموع المغلقة المؤكدة من 1m حتى 1W</div>
   </main>
 
   <nav class="mobile-nav" aria-label="التنقل السريع">
