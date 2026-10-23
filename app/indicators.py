@@ -76,8 +76,8 @@ def confirmed_pivots(
 ) -> list[dict[str, Any]]:
     """Return confirmed swing pivots only.
 
-    A pivot is not available until `right` candles exist after it. This keeps the
-    live/backtest feature deterministic and avoids using an unconfirmed last bar.
+    A pivot is unavailable until `right` candles exist after it. That prevents
+    the live signal and replay engine from treating an unfinished swing as known.
     """
     n = len(candles)
     if n < left + right + 3:
@@ -112,6 +112,20 @@ def _pivot_state(pivots: list[dict[str, Any]]) -> str:
     return "RANGE"
 
 
+def _rolling_structure(candles: list[dict[str, float]]) -> str:
+    if len(candles) < 40:
+        return "NEUTRAL"
+    older = candles[-40:-20]
+    recent = candles[-20:]
+    oh, ol = max(c["high"] for c in older), min(c["low"] for c in older)
+    rh, rl = max(c["high"] for c in recent), min(c["low"] for c in recent)
+    if rh > oh and rl > ol:
+        return "BULLISH"
+    if rh < oh and rl < ol:
+        return "BEARISH"
+    return "RANGE"
+
+
 def market_structure(candles: list[dict[str, float]]) -> dict[str, Any]:
     pivots = confirmed_pivots(candles)
     highs = [p for p in pivots if p["type"] == "HIGH"]
@@ -120,10 +134,12 @@ def market_structure(candles: list[dict[str, float]]) -> dict[str, Any]:
     latest_high = highs[-1] if highs else None
     latest_low = lows[-1] if lows else None
 
+    # Recent structure events are searched only against the latest three
+    # confirmed highs/lows. This keeps Replay fast while still following the
+    # levels that matter to the current structure.
+    candidates = sorted(highs[-3:] + lows[-3:], key=lambda x: x["index"])
     events: list[dict[str, Any]] = []
-    # Search only recent confirmed pivots; a break event is valid only when the
-    # pivot had already been confirmable before the crossing candle.
-    for p in pivots[-14:]:
+    for p in candidates:
         first_j = max(1, p["index"] + 3)
         for j in range(first_j, len(candles)):
             prev_close = float(candles[j - 1]["close"])
@@ -166,42 +182,46 @@ def market_structure(candles: list[dict[str, float]]) -> dict[str, Any]:
 
 
 def active_fvgs(candles: list[dict[str, float]], lookback: int = 120, limit: int = 4) -> list[dict[str, Any]]:
-    """Detect simple 3-candle fair-value gaps and return unfilled zones."""
-    if len(candles) < 3:
+    """Detect unfilled 3-candle fair-value gaps in O(n) for the lookback."""
+    n = len(candles)
+    if n < 3:
         return []
-    start = max(2, len(candles) - lookback)
+    start = max(2, n - lookback)
+
+    # Suffix extremes let us check whether a gap was fully filled without a
+    # nested scan for every candidate.
+    suffix_min_low = [float("inf")] * (n + 1)
+    suffix_max_high = [float("-inf")] * (n + 1)
+    for i in range(n - 1, -1, -1):
+        suffix_min_low[i] = min(float(candles[i]["low"]), suffix_min_low[i + 1])
+        suffix_max_high[i] = max(float(candles[i]["high"]), suffix_max_high[i + 1])
+
+    close = float(candles[-1]["close"])
     zones: list[dict[str, Any]] = []
-    for i in range(start, len(candles)):
+    for i in range(start, n):
         left = candles[i - 2]
         right = candles[i]
-        zone = None
+        zone: dict[str, Any] | None = None
         if float(right["low"]) > float(left["high"]):
-            zone = {
-                "kind": "BULLISH",
-                "lower": float(left["high"]),
-                "upper": float(right["low"]),
-                "time": int(right["time"]),
-                "index": i,
-            }
-            # Bullish FVG is considered fully filled once price trades through
-            # its lower boundary after formation.
-            zone["filled"] = any(float(c["low"]) <= zone["lower"] for c in candles[i + 1:])
+            lower = float(left["high"])
+            upper = float(right["low"])
+            filled = suffix_min_low[i + 1] <= lower
+            if not filled:
+                zone = {"kind": "BULLISH", "lower": lower, "upper": upper, "time": int(right["time"]), "index": i}
         elif float(right["high"]) < float(left["low"]):
-            zone = {
-                "kind": "BEARISH",
-                "lower": float(right["high"]),
-                "upper": float(left["low"]),
-                "time": int(right["time"]),
-                "index": i,
-            }
-            zone["filled"] = any(float(c["high"]) >= zone["upper"] for c in candles[i + 1:])
-        if zone and not zone["filled"]:
-            close = float(candles[-1]["close"])
+            lower = float(right["high"])
+            upper = float(left["low"])
+            filled = suffix_max_high[i + 1] >= upper
+            if not filled:
+                zone = {"kind": "BEARISH", "lower": lower, "upper": upper, "time": int(right["time"]), "index": i}
+
+        if zone:
             mid = (zone["lower"] + zone["upper"]) / 2
             zone["lower"] = round(zone["lower"], 2)
             zone["upper"] = round(zone["upper"], 2)
             zone["distance_pct"] = round(abs(close - mid) / close * 100, 3) if close else 0.0
             zones.append(zone)
+
     zones.sort(key=lambda z: (z["distance_pct"], -z["index"]))
     return zones[:limit]
 
@@ -209,8 +229,8 @@ def active_fvgs(candles: list[dict[str, float]], lookback: int = 120, limit: int
 def heuristic_order_block(candles: list[dict[str, float]], ms: dict[str, Any]) -> dict[str, Any] | None:
     """Return the last opposite candle before the latest BOS/CHoCH.
 
-    This is deliberately labelled heuristic. It is a deterministic research
-    feature, not a claim that every returned zone is an institutional order block.
+    The output is explicitly heuristic: it is a reproducible research zone,
+    not a claim that every returned candle is an institutional order block.
     """
     event = ms.get("event")
     if not event:
@@ -238,22 +258,8 @@ def heuristic_order_block(candles: list[dict[str, float]], ms: dict[str, Any]) -
 
 
 def structure(candles: list[dict[str, float]]) -> str:
-    # Prefer confirmed swing structure. Fall back to the older rolling-range
-    # method when not enough confirmed pivots exist yet.
     ms = market_structure(candles)
-    if ms["state"] != "NEUTRAL":
-        return ms["state"]
-    if len(candles) < 40:
-        return "NEUTRAL"
-    older = candles[-40:-20]
-    recent = candles[-20:]
-    oh, ol = max(c["high"] for c in older), min(c["low"] for c in older)
-    rh, rl = max(c["high"] for c in recent), min(c["low"] for c in recent)
-    if rh > oh and rl > ol:
-        return "BULLISH"
-    if rh < oh and rl < ol:
-        return "BEARISH"
-    return "RANGE"
+    return ms["state"] if ms["state"] != "NEUTRAL" else _rolling_structure(candles)
 
 
 def snapshot(candles: list[dict[str, float]]) -> dict[str, Any]:
@@ -275,7 +281,7 @@ def snapshot(candles: list[dict[str, float]]) -> dict[str, Any]:
     support = min(c["low"] for c in recent)
     resistance = max(c["high"] for c in recent)
     market = market_structure(candles)
-    st = market["state"] if market["state"] != "NEUTRAL" else structure(candles)
+    st = market["state"] if market["state"] != "NEUTRAL" else _rolling_structure(candles)
     fvgs = active_fvgs(candles)
     ob = heuristic_order_block(candles, market)
 
@@ -363,8 +369,7 @@ def vote(s: dict[str, Any]) -> float:
     elif ob.get("kind") == "BEARISH":
         score -= 0.25
 
-    # Only a small contribution from nearby, still-active FVGs. This keeps
-    # market-structure features contextual rather than letting one zone dominate.
+    # Nearby active FVGs are context only; they never dominate the signal.
     for zone in (s.get("fvg_zones") or [])[:2]:
         if float(zone.get("distance_pct", 99)) > 1.5:
             continue
