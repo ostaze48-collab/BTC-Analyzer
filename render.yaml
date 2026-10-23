@@ -1,0 +1,28 @@
+services:
+  - type: web
+    runtime: docker
+    name: btc-ai-trader-v1
+    plan: free
+    region: frankfurt
+    branch: main
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: BTC_SYMBOL
+        value: BTCUSDT
+      - key: PAPER_START_CAPITAL
+        value: "1000"
+      - key: RISK_PER_TRADE
+        value: "0.0075"
+      - key: PAPER_FEE_RATE
+        value: "0.001"
+      - key: MIN_CONFIDENCE
+        value: "65"
+      - key: MIN_SAFETY_SCORE
+        value: "68"
+      - key: MIN_RR
+        value: "1.5"
+      - key: MAX_STOP_PCT
+        value: "2.5"
