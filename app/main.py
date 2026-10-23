@@ -67,6 +67,16 @@ async def home():
     return FileResponse(static_dir / "index.html")
 
 
+@app.get("/health")
+async def health():
+    return {
+        "ok": True,
+        "service": "BTC AI Trader V1",
+        "market_connected": bool(engine and engine.market.connected),
+        "paper_only": True,
+    }
+
+
 @app.get("/api/state")
 async def api_state():
     return engine.state()
