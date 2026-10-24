@@ -17,6 +17,7 @@ from .db import Database
 from .edge_lab import analyze_feature_edge
 from .engine import TradingEngine
 from .evidence_stability import evidence_stability_gate
+from .experiment_archive import ExperimentArchive, build_experiment_snapshot
 from .full_target_walkforward import run_full_target_walkforward
 from .incremental_edge import incremental_walkforward
 from .live_shadow_target import validate_live_shadow_target
@@ -65,6 +66,9 @@ engine: TradingEngine | None = None
 backtester = BacktestEngine()
 cycle_validator = CycleWalkForward()
 research_history = ResearchHistoryStore(settings.db_path)
+experiment_archive = ExperimentArchive(settings.db_path)
+experiment_archive_ready = False
+experiment_archive_error: str | None = None
 last_execution_replay: dict[str, Any] | None = None
 full_target_results: dict[str, dict[str, Any]] = {}
 full_target_running: set[str] = set()
@@ -72,14 +76,22 @@ full_target_running: set[str] = set()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global engine
+    global engine, experiment_archive_ready, experiment_archive_error
     db.init()
     research_history.init()
+    try:
+        experiment_archive.init()
+        experiment_archive_ready = True
+        experiment_archive_error = None
+    except Exception as exc:  # Archive failure must never take down market/PAPER runtime.
+        experiment_archive_ready = False
+        experiment_archive_error = str(exc)
     engine = TradingEngine(db, hub.broadcast)
     await engine.start()
     yield
     await engine.stop()
     research_history.close()
+    experiment_archive.close()
 
 
 app = FastAPI(title=f"{APP_NAME} {APP_LABEL}", version=APP_VERSION, lifespan=lifespan)
@@ -104,6 +116,11 @@ async def health():
         "cycle_validation_running": cycle_validator.running,
         "paper_only": True,
         "real_execution_enabled": False,
+        "stable_experiment_ui": True,
+        "experiment_archive": True,
+        "experiment_archive_ready": experiment_archive_ready,
+        "experiment_archive_backend": experiment_archive.backend,
+        "experiment_archive_persistent": experiment_archive.persistent_across_redeploys,
         "timeframes": list(settings.intervals),
         "analysis_horizon": "1m→1y",
         "learning_journal": True,
@@ -200,6 +217,69 @@ def _research_bundle(limit: int = 5000, record: bool = True) -> tuple[dict[str, 
     return unified, strict
 
 
+def _archive_status() -> dict[str, Any]:
+    return {
+        **experiment_archive.info(),
+        "ready": experiment_archive_ready,
+        "error": experiment_archive_error if not experiment_archive_ready else None,
+    }
+
+
+def _archive_current(label: str | None = None, require_results: bool = False) -> dict[str, Any] | None:
+    if not experiment_archive_ready:
+        if require_results:
+            raise HTTPException(503, "Experiment archive is temporarily unavailable")
+        return None
+    snapshot = build_experiment_snapshot(db, APP_VERSION, label)
+    if int((snapshot.get("metrics") or {}).get("trades", 0) or 0) <= 0:
+        if require_results:
+            raise HTTPException(409, "No closed PAPER trades to archive yet")
+        return None
+    try:
+        return experiment_archive.save(snapshot)
+    except Exception as exc:
+        if require_results:
+            raise HTTPException(503, f"Could not archive experiment: {exc}") from exc
+        return None
+
+
+@app.get("/api/experiment/current")
+async def api_experiment_current():
+    snapshot = build_experiment_snapshot(db, APP_VERSION, "Current Paper Experiment")
+    snapshot["archive"] = _archive_status()
+    return snapshot
+
+
+@app.get("/api/experiments")
+async def api_experiments(limit: int = 30):
+    if not experiment_archive_ready:
+        return {"archive": _archive_status(), "runs": []}
+    try:
+        runs = experiment_archive.list(max(1, min(int(limit), 100)))
+    except Exception as exc:
+        return {"archive": {**_archive_status(), "ready": False, "error": str(exc)}, "runs": []}
+    return {"archive": _archive_status(), "runs": runs}
+
+
+@app.post("/api/experiment/archive")
+async def api_archive_experiment(label: str = "Saved Paper Experiment"):
+    saved = _archive_current(label, require_results=True)
+    return {"ok": True, "archive": _archive_status(), "run": saved}
+
+
+@app.post("/api/experiment/new")
+async def api_new_experiment(label: str = "Auto Archive Before New Experiment"):
+    if db.active_trade():
+        raise HTTPException(409, "Close the active PAPER trade before starting a new experiment")
+    saved = _archive_current(label, require_results=False)
+    try:
+        result = engine.reset()
+        research_history.clear()
+        return {"ok": True, "archived": saved, "reset": result, "archive": _archive_status()}
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @app.get("/api/readiness")
 async def api_readiness():
     report = _readiness()
@@ -241,19 +321,25 @@ async def api_historical_target_advisor():
 
 @app.get("/api/target-policy-validation")
 async def api_target_policy_validation(limit: int = 5000):
-    safe_limit = max(1, min(limit, 20000)); samples = db.edge_samples(safe_limit); trades = db.recent_trades(safe_limit)
+    safe_limit = max(1, min(limit, 20000))
+    samples = db.edge_samples(safe_limit)
+    trades = db.recent_trades(safe_limit)
     return validate_target_policy(samples, trades)
 
 
 @app.get("/api/live-shadow-target")
 async def api_live_shadow_target(limit: int = 5000):
-    safe_limit = max(1, min(limit, 20000)); samples = db.edge_samples(safe_limit); trades = db.recent_trades(safe_limit)
+    safe_limit = max(1, min(limit, 20000))
+    samples = db.edge_samples(safe_limit)
+    trades = db.recent_trades(safe_limit)
     return validate_live_shadow_target(samples, trades)
 
 
 @app.get("/api/target-evidence-gate")
 async def api_target_evidence_gate(limit: int = 5000):
-    safe_limit = max(1, min(limit, 20000)); samples = db.edge_samples(safe_limit); trades = db.recent_trades(safe_limit)
+    safe_limit = max(1, min(limit, 20000))
+    samples = db.edge_samples(safe_limit)
+    trades = db.recent_trades(safe_limit)
     live = validate_live_shadow_target(samples, trades)
     return target_evidence_gate(full_target_results, live)
 
@@ -298,22 +384,32 @@ async def api_full_target_walkforward(brain: str = "INTRADAY"):
     if result:
         return result
     archive = engine.historical_archive.state(brain)
-    return {"status":"NOT_RUN","brain":brain,"archive":archive,"mode":"FULL_ARCHIVE_TARGET_WALKFORWARD","auto_apply":False,"weight_in_risk_engine":0.0}
+    return {
+        "status": "NOT_RUN", "brain": brain, "archive": archive,
+        "mode": "FULL_ARCHIVE_TARGET_WALKFORWARD", "auto_apply": False,
+        "weight_in_risk_engine": 0.0,
+    }
 
 
 @app.post("/api/full-target-walkforward")
 async def api_run_full_target_walkforward(brain: str = "INTRADAY", max_points: int = 300):
-    brain = _normalize_brain(brain); max_points = max(80, min(int(max_points), 600))
+    brain = _normalize_brain(brain)
+    max_points = max(80, min(int(max_points), 600))
     if brain in full_target_running:
         return {"status": "RUNNING", "brain": brain, "cached": full_target_results.get(brain)}
     archive = engine.historical_archive.schedule(brain)
     if archive.get("status") not in ("READY", "PARTIAL"):
-        return {"status":"ARCHIVE_LOADING","brain":brain,"archive":archive,"message":"Deep history is loading in the background. Run again after archive status becomes READY/PARTIAL.","auto_apply":False,"weight_in_risk_engine":0.0}
+        return {
+            "status": "ARCHIVE_LOADING", "brain": brain, "archive": archive,
+            "message": "Deep history is loading in the background. Run again after archive status becomes READY/PARTIAL.",
+            "auto_apply": False, "weight_in_risk_engine": 0.0,
+        }
     full_target_running.add(brain)
     try:
         history = engine._history_for_analogs(brain)
         result = await asyncio.to_thread(run_full_target_walkforward, history, brain, max_points)
-        result["archive"] = engine.historical_archive.state(brain); full_target_results[brain] = result
+        result["archive"] = engine.historical_archive.state(brain)
+        full_target_results[brain] = result
         return result
     finally:
         full_target_running.discard(brain)
@@ -321,64 +417,91 @@ async def api_run_full_target_walkforward(brain: str = "INTRADAY", max_points: i
 
 @app.get("/api/historical-archive")
 async def api_historical_archive(brain: str | None = None):
-    if brain: return engine.historical_archive.state(brain.upper())
-    return {"current":engine.archive_state,"brains":{name:engine.historical_archive.state(name) for name in ("SCALP","INTRADAY","SWING")},"mode":"LAZY_SHADOW_ONLY","weight_in_master":0.0}
+    if brain:
+        return engine.historical_archive.state(brain.upper())
+    return {
+        "current": engine.archive_state,
+        "brains": {name: engine.historical_archive.state(name) for name in ("SCALP", "INTRADAY", "SWING")},
+        "mode": "LAZY_SHADOW_ONLY", "weight_in_master": 0.0,
+    }
 
 
 @app.get("/api/network")
 async def api_network(refresh: bool = False):
-    if refresh: return await engine.network_source.refresh_if_due(force=True)
+    if refresh:
+        return await engine.network_source.refresh_if_due(force=True)
     return engine.network
 
 
 @app.get("/api/derivatives")
 async def api_derivatives(refresh: bool = False):
-    if refresh: return await engine.derivatives_source.refresh_if_due(force=True)
+    if refresh:
+        return await engine.derivatives_source.refresh_if_due(force=True)
     return engine.derivatives
 
 
 @app.get("/api/learning")
-async def api_learning(): return db.learning_summary()
+async def api_learning():
+    return db.learning_summary()
 
 
 @app.get("/api/candles/{interval}")
 async def api_candles(interval: str, limit: int = 500):
-    if interval not in settings.intervals: raise HTTPException(400, f"Unsupported interval: {interval}")
+    if interval not in settings.intervals:
+        raise HTTPException(400, f"Unsupported interval: {interval}")
     return engine.market.get(interval, max(8, min(limit, 500)))
 
 
 @app.get("/api/trades")
-async def api_trades(limit: int = 50): return db.recent_trades(max(1, min(limit, 200)))
+async def api_trades(limit: int = 50):
+    return db.recent_trades(max(1, min(limit, 200)))
 
 
 @app.post("/api/backtest")
 async def api_backtest(days: int = 3):
     global last_execution_replay
-    if days not in (1,3,7,14): raise HTTPException(400, "days must be one of: 1, 3, 7, 14")
+    if days not in (1, 3, 7, 14):
+        raise HTTPException(400, "days must be one of: 1, 3, 7, 14")
     try:
-        result = await backtester.run(days); result["validation_type"] = "SHORT_WINDOW_REPLAY"; last_execution_replay = result; return result
-    except RuntimeError as exc: raise HTTPException(409, str(exc)) from exc
+        result = await backtester.run(days)
+        result["validation_type"] = "SHORT_WINDOW_REPLAY"
+        last_execution_replay = result
+        return result
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @app.post("/api/cycle-validation")
 async def api_cycle_validation(years: int = 6):
-    if years not in (3,4,5,6,7,8,9): raise HTTPException(400, "years must be between 3 and 9")
-    try: return await cycle_validator.run(years)
-    except RuntimeError as exc: raise HTTPException(409, str(exc)) from exc
+    if years not in (3, 4, 5, 6, 7, 8, 9):
+        raise HTTPException(400, "years must be between 3 and 9")
+    try:
+        return await cycle_validator.run(years)
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @app.post("/api/reset")
 async def api_reset():
+    if db.active_trade():
+        raise HTTPException(409, "Close the active PAPER trade before resetting the experiment")
+    saved = _archive_current("Auto Archive Before Reset", require_results=False)
     try:
-        result = engine.reset(); research_history.clear(); return result
-    except RuntimeError as exc: raise HTTPException(409, str(exc)) from exc
+        result = engine.reset()
+        research_history.clear()
+        return {"reset": result, "archived": saved, "archive": _archive_status()}
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await hub.connect(ws)
     try:
-        await ws.send_json({"type":"state","state":engine.state()})
-        while True: await ws.receive_text()
-    except WebSocketDisconnect: await hub.disconnect(ws)
-    except Exception: await hub.disconnect(ws)
+        await ws.send_json({"type": "state", "state": engine.state()})
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        await hub.disconnect(ws)
+    except Exception:
+        await hub.disconnect(ws)
