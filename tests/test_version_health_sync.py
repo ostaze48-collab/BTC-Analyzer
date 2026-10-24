@@ -9,6 +9,10 @@ class VersionHealthSyncTests(unittest.IsolatedAsyncioTestCase):
         data = await health()
         self.assertEqual(data["version"], APP_VERSION)
         self.assertEqual(data["version_label"], APP_LABEL)
+        self.assertTrue(data["stable_experiment_ui"])
+        self.assertTrue(data["experiment_archive"])
+        self.assertIn(data["experiment_archive_backend"], ("sqlite", "postgres"))
+        self.assertIsInstance(data["experiment_archive_persistent"], bool)
         self.assertTrue(data["historical_analogs"])
         self.assertTrue(data["long_historical_memory"])
         self.assertTrue(data["historical_signature_cache"])
@@ -24,6 +28,7 @@ class VersionHealthSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["evidence_stability_window_mode"], "24H_TIME_AND_NEW_TRADE_GATE")
         self.assertFalse(data["target_policy_auto_apply"])
         self.assertFalse(data["real_execution_enabled"])
+        self.assertTrue(data["paper_only"])
 
 
 if __name__ == "__main__":
