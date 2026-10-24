@@ -1,114 +1,98 @@
-# BTC AI Trader V1.28
+# BTC AI Trader V2.0 STABLE
 
-منظومة بحث ومحاكاة **Paper Trading فقط** لتحليل BTCUSDT عبر ثلاثة عقول مترابطة: `SCALP` و`INTRADAY` و`SWING`، ثم اختيار صفقة واحدة بواسطة `MASTER`.
+نسخة **Stable Experiment** مخصصة للتجربة وقياس النتائج على Paper Trading بدون تغيير منطق العقول أثناء فترة القياس.
 
-> التداول الحقيقي معطّل. لا توجد في V1.28 أي درجة Stability تسمح تلقائيًا باستخدام أموال حقيقية أو تغيير الأهداف الفعلية.
+## هدف النسخة
 
-## ما الجديد في V1.28؟
+- تثبيت المحرك الحالي بدل إضافة ميزات جديدة أثناء الاختبار.
+- تشغيل `SCALP / INTRADAY / SWING` مع `MASTER` وصفقة واحدة فقط.
+- الاحتفاظ بقراءة BTC من `1m` حتى `1Y` وكل طبقات Historical Memory / Walk-Forward / Strict Paper الموجودة في V1.28.
+- عرض نتائج واضحة وسريعة على الهاتف.
+- حفظ سجل نتائج محلي على الجهاز حتى بعد Reset أو إعادة نشر الخدمة.
+- تصدير النتائج كملف JSON للرجوع إليها أو تحليلها لاحقًا.
 
-V1.28 تضيف **Multi‑Day Stability Ladder** فوق V1.27. الهدف هو الانتقال من نافذة قصيرة 24 ساعة إلى سلم ثبات متسلسل:
+> التداول الحقيقي معطّل. V2.0 STABLE هي نسخة قياس Paper فقط، وليست تصريحًا باستخدام أموال حقيقية.
 
-- `L1_24H`
-- `L2_72H`
-- `L3_168H` = 7 أيام
+## Stable Experiment Dashboard
 
-لا يمكن القفز إلى مستوى أعلى إذا فشل المستوى السابق.
+الواجهة الجديدة تضيف لوحة رئيسية مبسطة تعرض:
 
-### L1 · 24H
+- رأس المال الحالي.
+- Net P/L.
+- عدد الصفقات المغلقة.
+- Win Rate.
+- Profit Factor.
+- Max Drawdown.
+- نتائج آخر 24 ساعة.
+- نتائج آخر 7 أيام.
+- نتائج آخر 30 يوم.
+- أداء SCALP / INTRADAY / SWING: P/L وWin Rate وMean R.
 
-- ≥ 24 ساعة تاريخ أدلة.
-- ≥ 8 Snapshots.
-- ≥ 20 صفقة Paper جديدة.
-- ≥ 120 صفقة Paper إجمالًا.
-- نشاط تداول في ≥ يوم UTC واحد.
-- Strict Paper pass rate ≥ 75%.
-- Unified mandatory pass rate ≥ 75%.
-- لا regressions.
-- V1.27 canonical 24H gate يجب أن يمر أيضًا.
+## حفظ النتائج
 
-### L2 · 72H
+`stable.js` يحتفظ بلقطات النتائج داخل `localStorage` على نفس الهاتف/المتصفح.
 
-- ≥ 72 ساعة.
-- ≥ 18 Snapshots.
-- ≥ 45 صفقة Paper جديدة.
-- ≥ 150 صفقة إجمالًا.
-- نشاط Paper موزع على ≥ 3 أيام UTC.
-- Strict pass rate ≥ 80%.
-- Mandatory pass rate ≥ 80%.
-- صفر regressions.
+- تحفظ لقطة تلقائية عند تغير عدد الصفقات أو P/L.
+- إذا لم يتغير شيء، يمكن حفظ لقطة زمنية كل 30 دقيقة بدل تكرار نفس البيانات باستمرار.
+- زر **حفظ لقطة نتائج** يحفظ Snapshot يدويًا.
+- قبل `Reset` يتم حفظ Snapshot باسم `PRE_RESET` ثم فقط يتم تصفير المحاكاة.
+- زر **تصدير JSON** يصدر الأرشيف المحلي + الحالة الحالية + آخر الصفقات.
+- يحتفظ المتصفح بآخر 120 Snapshot محلية لتجنب تضخم التخزين.
 
-### L3 · 7D
+هذا الأرشيف المحلي مستقل عن SQLite على الخادم، وبالتالي يساعد في الاحتفاظ بنتائج القياس على الهاتف حتى لو أعيد نشر Render. حذف بيانات المتصفح يدويًا قد يحذف الأرشيف المحلي، لذلك يفضّل تصدير JSON دوريًا.
 
-- ≥ 168 ساعة.
-- ≥ 35 Snapshots.
-- ≥ 90 صفقة Paper جديدة.
-- ≥ 200 صفقة إجمالًا.
-- نشاط Paper موزع على ≥ 6 أيام UTC.
-- Strict pass rate ≥ 85%.
-- Mandatory pass rate ≥ 85%.
-- صفر regressions.
+## تصميم الهاتف
 
-### لماذا Active Trade Days؟
+V2.0 STABLE تضيف طبقة تصميم Mobile‑First جديدة:
 
-وجود 90 صفقة في يوم واحد ثم عدم وجود نشاط بقية الأسبوع لا يعتبر استقرارًا أسبوعيًا. V1.28 تحسب الأيام التي زاد فيها العدد التراكمي للصفقات المغلقة، وتفرض توزيع النشاط زمنيًا.
+- واجهة داكنة حديثة Glass / Gradient.
+- لوحة Stable Experiment أعلى الصفحة.
+- KPIs كبيرة وواضحة للمس.
+- بطاقات نتائج 24h / 7d / 30d.
+- بطاقات العقول قابلة للسحب أفقيًا.
+- أرشيف النتائج قابل للسحب على الهاتف.
+- Bottom navigation من 5 أقسام: الرئيسية / العقول / الشارت / النتائج / المختبر.
+- المختبرات البحثية المتقدمة مخفية افتراضيًا ويمكن إظهارها بزر واحد لتقليل ازدحام الشاشة.
 
-## حالات السلم
+## المحرك المثبت
 
-- `MULTIDAY_STABILITY_BLOCKED`
-- `STABILITY_24H_CONFIRMED`
-- `STABILITY_72H_CONFIRMED`
-- `STABILITY_7D_CONFIRMED`
+لم نغيّر منطق التداول في هذه النسخة. تبقى قدرات V1.28 كما هي:
 
-حتى عند `STABILITY_7D_CONFIRMED`:
-
-- `paper_only = true`
-- `automatic_real_execution = false`
-- `real_execution_eligibility = false`
-- `live_execution_enabled = false`
-- `target_auto_apply = false`
-- `guarantee = NONE`
-
-والمرحلة التالية فقط:
-
-`EXTENDED_MULTI_WEEK_PAPER_OBSERVATION`
-
-## الطبقات السابقة محفوظة
-
-- V1.24 Unified Research Readiness.
-- V1.25 Strict Paper Review بنوافذ 30/60/100.
-- V1.26 Research Evidence History.
-- V1.27 24H Evidence Stability Window.
-- V1.28 Multi‑Day Stability Ladder.
-
-## واجهة الهاتف
-
-- `v35.js`: Strict Paper Review.
-- `v36.js`: Research Evidence History.
-- `v37.js`: 24H Evidence Stability Window.
-- `v38.js`: 24H → 72H → 7D Multi‑Day Ladder، ويقرأ نفس Research History دون التأثير على MASTER.
+- 18 فريم من `1m` حتى `1Y`.
+- 3 Brains مترابطة + MASTER.
+- Adaptive Paper Risk.
+- صفقة واحدة فقط.
+- أهداف ديناميكية `1R → 5R`.
+- Historical Memory.
+- Feature Edge / Incremental Walk-Forward.
+- Historical Target Advisor.
+- Frozen-entry Shadow Validation.
+- Unified Readiness.
+- Strict Paper Review.
+- Research Evidence History.
+- 24H → 72H → 7D Stability Ladder.
 
 ## إدارة المخاطرة
 
-- رأس المال التجريبي: `$1,000`.
-- صفقة واحدة فقط.
+- رأس المال الافتراضي: `$1,000`.
+- Real execution = OFF.
 - Paper leverage القصوى الافتراضية: `5x`.
-- Dynamic risk/stop/targets بين `1R` و`5R`.
-- Soft Pause + hard drawdown limit.
+- مخاطرة Stop ديناميكية ومحدودة.
+- Soft Pause قبل الانهيار.
+- Hard model drawdown limit = `25%` من رأس المال الابتدائي.
 - لا Auto Apply من أي طبقة بحثية.
 
 ## CI
 
-GitHub Actions يفحص:
+GitHub Actions يفحص قبل الدمج:
 
 - Python compile.
-- JavaScript حتى `v38.js`.
-- عدم القفز بين درجات السلم.
-- منع دفعة تداول في يوم واحد من اجتياز 7D.
-- استمرار اختبارات V1.27 وStrict Paper وEvidence History وNo-lookahead.
+- JavaScript لجميع الطبقات حتى `v38.js`.
+- JavaScript للواجهة المستقرة `stable.js`.
+- Unit tests لكل طبقات البحث والمخاطرة السابقة.
+- اختبار أن Stable UI يحتوي Local Result Archive وPRE_RESET وJSON Export.
 - Startup + `/health`.
 
-## المبدأ
+## قاعدة القياس من الآن
 
-`Market Data → 3 Brains → MASTER → Adaptive Risk → Historical Memory → OOS Validation → Unified Readiness → Strict Paper → Evidence History → 24H Stability → 72H Stability → 7D Stability → Extended Multi‑Week Paper Observation`
-
-الهدف هو أن تُثبت المنظومة أن جودة الأدلة **مستمرة وموزعة زمنيًا**، لا ناتجة عن لقطة أو يوم تداول استثنائي واحد.
+أثناء تجربة V2.0 STABLE لا نغيّر أوزان العقول أو استراتيجية الدخول/الخروج في `main`. أي فكرة جديدة تُبنى على فرع Research منفصل، ولا تدخل النسخة المستقرة إلا بعد إنهاء فترة قياس ومقارنة النتائج.

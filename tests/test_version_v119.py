@@ -6,8 +6,8 @@ from app.version import APP_LABEL, APP_VERSION
 
 class VersionCapabilityTests(unittest.TestCase):
     def test_version(self):
-        self.assertEqual(APP_VERSION, "1.28.0")
-        self.assertEqual(APP_LABEL, "V1.28")
+        self.assertEqual(APP_VERSION, "2.0.0")
+        self.assertEqual(APP_LABEL, "V2.0 STABLE")
 
     def test_target_advisor_remains_shadow_only(self):
         r = build_historical_target_advisor_from_summary({
