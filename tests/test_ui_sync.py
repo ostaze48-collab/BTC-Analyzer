@@ -16,36 +16,31 @@ class UiSyncTests(unittest.TestCase):
             self.assertIn(f'/static/{script}', html)
         self.assertIn('/static/stable.css', html)
 
-    def test_v35_still_reads_strict_paper_review(self):
+    def test_research_layers_remain_available(self):
         v35 = Path("app/static/v35.js").read_text(encoding="utf-8")
-        self.assertIn("/api/strict-paper-review", v35)
-        self.assertIn("Strict Paper Review Protocol", v35)
-
-    def test_v36_still_reads_research_evidence_history(self):
         v36 = Path("app/static/v36.js").read_text(encoding="utf-8")
-        self.assertIn("/api/research-history", v36)
-        self.assertIn("Research Evidence History", v36)
-
-    def test_v37_still_reads_evidence_stability_window(self):
         v37 = Path("app/static/v37.js").read_text(encoding="utf-8")
-        self.assertIn("/api/evidence-stability", v37)
-        self.assertIn("Evidence Stability Window", v37)
-
-    def test_v38_still_reads_multiday_stability_ladder(self):
         v38 = Path("app/static/v38.js").read_text(encoding="utf-8")
-        self.assertIn("/api/research-history", v38)
+        self.assertIn("/api/strict-paper-review", v35)
+        self.assertIn("/api/research-history", v36)
+        self.assertIn("/api/evidence-stability", v37)
         self.assertIn("Multi‑Day Stability Ladder", v38)
 
-    def test_stable_ui_preserves_results_and_mobile_experiment_mode(self):
+    def test_stable_ui_uses_persistent_server_archive_with_local_backup(self):
         stable = Path("app/static/stable.js").read_text(encoding="utf-8")
         css = Path("app/static/stable.css").read_text(encoding="utf-8")
         self.assertIn("btc_ai_trader_v2_stable_results", stable)
-        self.assertIn("PRE_RESET", stable)
-        self.assertIn("/api/trades?limit=200", stable)
-        self.assertIn("application/json", stable)
+        self.assertIn("/api/experiment/current", stable)
+        self.assertIn("/api/experiments?limit=20", stable)
+        self.assertIn("/api/experiment/archive", stable)
+        self.assertIn("/api/experiment/new", stable)
+        self.assertIn("equity_curve", stable)
+        for view in ("home", "chart", "results", "research"):
+            self.assertIn(f'data-view="{view}"', stable)
         self.assertIn("stableResultsSection", stable)
+        self.assertIn("stable-tabs", css)
+        self.assertIn("stable-equity", css)
         self.assertIn("@media(max-width:900px)", css)
-        self.assertIn("stable-brain-results", css)
         self.assertEqual(APP_VERSION, "2.0.0")
         self.assertEqual(APP_LABEL, "V2.0 STABLE")
 
